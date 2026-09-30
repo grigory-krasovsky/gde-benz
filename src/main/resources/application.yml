@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: gde-benz
+  config:
+    # Load local secrets from .env (KEY=VALUE, read as a properties file). Optional: in prod the
+    # values come from real environment variables instead, so a missing .env is not an error.
+    import: "optional:file:.env[.properties]"
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/gdebenz}
+    username: ${SPRING_DATASOURCE_USERNAME:gdebenz}
+    password: ${SPRING_DATASOURCE_PASSWORD:gdebenz}
+  jpa:
+    hibernate:
+      # dev-friendly default; switch to "validate" (or use Flyway/Liquibase) for production
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    open-in-view: false
+
+telegram:
+  bot:
+    # Provide the token via the TELEGRAM_BOT_TOKEN environment variable (never commit real tokens).
+    token: ${TELEGRAM_BOT_TOKEN:}
+    username: ${TELEGRAM_BOT_USERNAME:}
+
+logging:
+  level:
+    org.telegram: INFO
+    ru.gdebenz: INFO
