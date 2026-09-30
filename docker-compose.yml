@@ -1,0 +1,41 @@
+# Local run: PostgreSQL + the gde-benz Telegram bot.
+# Secrets and DB credentials come from .env (see .env.example).
+#   docker compose up -d --build     # start
+#   docker compose logs -f app       # watch the bot
+#   docker compose down              # stop
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    # On the VPS, docker compose pulls this tag from GHCR (SERVER_IMAGE is the CI-built image).
+    # Locally SERVER_IMAGE is unset, so `docker compose up -d --build` builds and tags gde-benz:local.
+    image: ${SERVER_IMAGE:-gde-benz:local}
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Loads TELEGRAM_BOT_TOKEN (and POSTGRES_*) into the container.
+    env_file:
+      - .env
+    # Point Spring at the postgres service instead of localhost.
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+    restart: unless-stopped
+
+volumes:
+  pgdata:

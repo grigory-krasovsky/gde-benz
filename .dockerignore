@@ -1,0 +1,17 @@
+# Build output and local cruft — keep the build context (and image) small and secret-free.
+target/
+.git/
+.gitignore
+.idea/
+*.iml
+.mvn/
+mvnw
+mvnw.cmd
+ping.ps1
+
+# Never bake local secrets into the image (provided at runtime via compose env_file).
+.env
+
+# Docs / tooling not needed for the build.
+CLAUDE.md
+.claude/
