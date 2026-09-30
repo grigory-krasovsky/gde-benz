@@ -11,15 +11,23 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:gdebenz}
   jpa:
     hibernate:
-      # dev-friendly default; switch to "validate" (or use Flyway/Liquibase) for production
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+      # Flyway owns the schema; Hibernate only validates the mapping against it.
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
     open-in-view: false
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
 
 telegram:
   bot:
     # Provide the token via the TELEGRAM_BOT_TOKEN environment variable (never commit real tokens).
     token: ${TELEGRAM_BOT_TOKEN:}
     username: ${TELEGRAM_BOT_USERNAME:}
+
+gdebenz:
+  registration:
+    # How long a rejected user must wait before /register is accepted again.
+    reject-cooldown: ${GDEBENZ_REJECT_COOLDOWN:30m}
 
 logging:
   level:

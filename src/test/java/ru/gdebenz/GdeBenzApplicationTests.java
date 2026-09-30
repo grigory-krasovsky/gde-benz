@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
         "spring.datasource.url=jdbc:h2:mem:gdebenz;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
+        "spring.flyway.enabled=false",
         "spring.jpa.hibernate.ddl-auto=create-drop"
 })
 class GdeBenzApplicationTests {

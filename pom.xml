@@ -39,6 +39,18 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Database schema migrations (Flyway owns the schema).
+             Spring Boot 4 moved the Flyway auto-configuration into the spring-boot-flyway module;
+             flyway-core alone no longer triggers migrations, so pull the dedicated starter. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
         <!-- Telegram Bot API: long-polling Spring Boot starter (rubenlagus/TelegramBots) -->
         <dependency>
             <groupId>org.telegram</groupId>
