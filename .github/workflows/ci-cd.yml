@@ -26,9 +26,9 @@ jobs:
           cache: maven
 
       - name: Build & test
-        run: |
-          chmod +x mvnw
-          ./mvnw -B clean verify
+        # ubuntu-latest ships Maven preinstalled; the Maven wrapper is gitignored in this repo
+        # (see .gitignore), and the Dockerfile builds with `mvn` too — stay consistent.
+        run: mvn -B clean verify
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
