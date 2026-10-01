@@ -10,9 +10,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Renders a nearby result as a compact Telegram HTML message:
- * one visible headline per station (status · name · fuels · queue), with address, distance,
- * limit, confirmations, freshness and the route link tucked into an expandable blockquote.
+ * Renders a nearby result as a Telegram HTML message. Per station, visible lines are:
+ * name, fuels, queue (if any) and the route link; address / distance / limit / confirmations /
+ * freshness go into an expandable blockquote below.
  */
 @Component
 public class NearbyFormatter {
@@ -29,39 +29,49 @@ public class NearbyFormatter {
         }
         StringBuilder sb = new StringBuilder("⛽ <b>АЗС рядом</b>\n");
         for (StationView s : result.stations()) {
-            sb.append('\n').append(headline(s)).append('\n');
-            sb.append(details(s, originLat, originLon));
+            sb.append('\n').append(card(s, originLat, originLon));
         }
         return sb.toString();
     }
 
-    private String headline(StationView s) {
+    private String card(StationView s, double originLat, double originLon) {
         List<String> segments = segments(s.detail());
-        StringBuilder h = new StringBuilder(s.status().emoji())
-                .append(" <b>").append(esc(s.brand())).append("</b>");
-        switch (s.status()) {
-            case AVAILABLE, QUEUE -> {
-                String fuels = fuelsOf(s, segments);
-                if (!fuels.isEmpty()) {
-                    h.append(" — ").append(esc(fuels));
-                }
-                String queue = queueBadge(segments, s.status());
-                if (queue != null) {
-                    h.append(" · ").append(esc(queue));
-                }
-            }
-            case UNAVAILABLE -> h.append(" — ").append(esc(reasonOf(segments)));
-            case UNKNOWN -> {
-                if (!segments.isEmpty()) {
-                    h.append(" — ").append(esc(segments.get(0)));
-                }
-            }
+        List<String> lines = new ArrayList<>();
+
+        // 1) name (with a status emoji)
+        lines.add(s.status().emoji() + " <b>" + esc(s.brand()) + "</b>");
+        // 2) fuels (or, for a closed station, the reason)
+        String second = secondLine(s, segments);
+        if (second != null) {
+            lines.add(second);
         }
-        return h.toString();
+        // 3) queue, if known
+        String queue = queueBadge(segments, s.status());
+        if (queue != null) {
+            lines.add(esc(queue));
+        }
+        // 4) route link
+        lines.add("<a href=\"" + esc(routeUrl(originLat, originLon, s.lat(), s.lon())) + "\">🗺 Маршрут</a>");
+
+        // 5) everything else, collapsed
+        return String.join("\n", lines) + "\n" + collapsible(s, segments);
     }
 
-    private String details(StationView s, double originLat, double originLon) {
-        List<String> segments = segments(s.detail());
+    private String secondLine(StationView s, List<String> segments) {
+        if (s.status() == FuelStatus.UNAVAILABLE) {
+            return esc(reasonOf(segments));
+        }
+        String fuels = fuelsOf(s, segments);
+        if (!fuels.isEmpty()) {
+            return esc(fuels);
+        }
+        if (s.status() == FuelStatus.UNKNOWN && !segments.isEmpty()) {
+            return esc(segments.get(0));
+        }
+        return null;
+    }
+
+    private String collapsible(StationView s, List<String> segments) {
         String line1 = String.join(" · ", nonBlank(
                 s.addr().isBlank() ? null : esc(s.addr()),
                 fmtKm(s.distanceKm()) + " км",
@@ -69,8 +79,10 @@ public class NearbyFormatter {
         String line2 = String.join(" · ", nonBlank(
                 s.confirmations() > 0 ? s.confirmations() + " подтв." : null,
                 freshness(s.lastAt())));
-        String route = "<a href=\"" + esc(routeUrl(originLat, originLon, s.lat(), s.lon())) + "\">🗺 Маршрут</a>";
-        String body = String.join("\n", nonBlank(emptyToNull(line1), emptyToNull(line2), route));
+        String body = String.join("\n", nonBlank(emptyToNull(line1), emptyToNull(line2)));
+        if (body.isEmpty()) {
+            return "";
+        }
         return "<blockquote expandable>" + body + "</blockquote>\n";
     }
 
