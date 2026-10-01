@@ -34,20 +34,19 @@ import ru.gdebenz.user.BotUser;
 import ru.gdebenz.user.RegistrationService;
 import ru.gdebenz.user.TgUser;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Long-polling Telegram bot.
+ * Long-polling Telegram bot (inline-grid variant).
  *
  * <p>Registration: {@code /register}; the first registrant becomes admin, others wait for
- * inline approve/reject. Nearby: approved users tap an inline button, share a location via a
- * one-tap reply button, and get the result as a header (with Refresh) plus one message per
- * station, each with a "comments" button. Transient messages (prompt, shared location) and the
- * previous result batch are deleted to keep the chat clean.
+ * inline approve/reject. Nearby: approved users share a location and get a single message
+ * whose inline keyboard is an aligned grid — a header row plus one row per station
+ * (name, fuel columns 92/95/95+/98/100 as ✅/➖, route, comments). Tapping the name or a fuel
+ * cell shows a popup; Refresh edits the same message in place.
  */
 @Component
 public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements SpringLongPollingBot {
@@ -57,9 +56,15 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_APPROVE = "reg:approve:";
     private static final String CB_REJECT = "reg:reject:";
     private static final String CB_NEARBY = "nb:req";
-    private static final String CB_REFRESH = "nb:ref:";
-    private static final String CB_COMMENTS = "cmt:";
+    private static final String CB_GRID_REFRESH = "g:ref:";
+    private static final String CB_GRID_INFO = "g:i:";
+    private static final String CB_GRID_FUEL = "g:f:";
+    private static final String CB_GRID_CMT = "g:c:";
+    private static final String CB_GRID_NOOP = "g:noop";
     private static final String CB_COMMENTS_CLOSE = "cmt:close";
+
+    private static final String[] GRADES = {"92", "95", "95+", "98", "100"};
+    private static final int MAX_ROWS = 8;
 
     private final String botToken;
     private final TelegramClient client;
@@ -69,8 +74,11 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     /** Per-chat id of the "share your location" prompt, so we can delete it afterwards. */
     private final Map<Long, Integer> promptByChat = new ConcurrentHashMap<>();
-    /** Per-chat message ids of the current nearby result batch (header + station cards). */
-    private final Map<Long, List<Integer>> batchByChat = new ConcurrentHashMap<>();
+    /** Per-chat current grid state so callbacks can resolve a station by its row index. */
+    private final Map<Long, GridState> gridByChat = new ConcurrentHashMap<>();
+
+    private record GridState(double lat, double lon, NearbyResult result, Integer messageId) {
+    }
 
     public GdeBenzBot(TelegramBotProperties properties, TelegramClient client,
                       RegistrationService registration, FuelAvailabilityService fuel,
@@ -216,13 +224,13 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         }
     }
 
-    // ---- nearby flow ----
+    // ---- nearby (grid) flow ----
 
     private void sendMainMenu(long chatId) {
         send(SendMessage.builder()
                 .chatId(chatId)
                 .text("Готов искать топливо. Жми кнопку 👇")
-                .replyMarkup(singleButton("📍 Показать АЗС рядом", CB_NEARBY))
+                .replyMarkup(InlineKeyboardMarkup.builder().keyboardRow(rowOf(btn("📍 Показать АЗС рядом", CB_NEARBY))).build())
                 .build());
     }
 
@@ -255,7 +263,6 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             sendText(chatId, "Нужен доступ. Отправь /register, затем дождись одобрения.");
             return;
         }
-        // Keep the chat clean: drop the prompt and the shared-location message.
         Integer promptId = promptByChat.remove(chatId);
         if (promptId != null) {
             deleteMessage(chatId, promptId);
@@ -270,11 +277,26 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             sendText(chatId, "Источник данных сейчас недоступен. Попробуй через минуту.");
             return;
         }
-        renderNearby(chatId, lat, lon, result);
+        renderGrid(chatId, lat, lon, result);
     }
 
-    private void handleRefresh(CallbackQuery cb, String data) {
-        double[] point = parsePoint(data.substring(CB_REFRESH.length()));
+    /** Sends the grid as a single message, replacing the previous one. */
+    private void renderGrid(long chatId, double lat, double lon, NearbyResult result) {
+        GridState old = gridByChat.remove(chatId);
+        if (old != null && old.messageId() != null) {
+            deleteMessage(chatId, old.messageId());
+        }
+        Integer id = sendReturningId(SendMessage.builder()
+                .chatId(chatId)
+                .text(gridTitle(result))
+                .parseMode("HTML")
+                .replyMarkup(gridKeyboard(lat, lon, result))
+                .build());
+        gridByChat.put(chatId, new GridState(lat, lon, result, id));
+    }
+
+    private void handleGridRefresh(CallbackQuery cb, String data) {
+        double[] point = parsePoint(data.substring(CB_GRID_REFRESH.length()));
         if (point == null) {
             answerCallback(cb.getId(), "Некорректные данные.");
             return;
@@ -291,60 +313,57 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             return;
         }
         answerCallback(cb.getId(), "Обновлено");
-        renderNearby(cb.getMessage().getChatId(), point[0], point[1], result);
-    }
-
-    /** Sends the result as a header (with Refresh) + one message per station; drops the old batch. */
-    private void renderNearby(long chatId, double lat, double lon, NearbyResult result) {
-        clearBatch(chatId);
-        List<Integer> ids = new ArrayList<>();
-
-        String header = result.stations().isEmpty()
-                ? "Рядом ничего не нашлось. Попробуй ещё раз позже."
-                : "⛽ <b>АЗС рядом</b>";
-        Integer headerId = sendReturningId(SendMessage.builder()
-                .chatId(chatId)
-                .text(header)
-                .parseMode("HTML")
-                .replyMarkup(singleButton("🔄 Обновить", CB_REFRESH + String.format(Locale.ROOT, "%.5f:%.5f", lat, lon)))
-                .build());
-        if (headerId != null) {
-            ids.add(headerId);
-        }
-
-        for (StationView s : result.stations()) {
-            InlineKeyboardRow buttons = new InlineKeyboardRow();
-            buttons.add(InlineKeyboardButton.builder()
-                    .text("🗺 Маршрут")
-                    .url(NearbyFormatter.routeUrl(lat, lon, s.lat(), s.lon()))
-                    .build());
-            buttons.add(InlineKeyboardButton.builder()
-                    .text("💬 Отзывы")
-                    .callbackData(CB_COMMENTS + s.osmId())
-                    .build());
-            Integer id = sendReturningId(SendMessage.builder()
-                    .chatId(chatId)
-                    .text(formatter.formatStation(s, lat, lon))
+        long chatId = cb.getMessage().getChatId();
+        Integer messageId = cb.getMessage().getMessageId();
+        try {
+            client.execute(EditMessageText.builder()
+                    .chatId(String.valueOf(chatId))
+                    .messageId(messageId)
+                    .text(gridTitle(result))
                     .parseMode("HTML")
-                    .replyMarkup(InlineKeyboardMarkup.builder().keyboardRow(buttons).build())
+                    .replyMarkup(gridKeyboard(point[0], point[1], result))
                     .build());
-            if (id != null) {
-                ids.add(id);
-            }
-        }
-        batchByChat.put(chatId, ids);
-    }
-
-    private void clearBatch(long chatId) {
-        List<Integer> ids = batchByChat.remove(chatId);
-        if (ids != null) {
-            for (Integer id : ids) {
-                deleteMessage(chatId, id);
-            }
+            gridByChat.put(chatId, new GridState(point[0], point[1], result, messageId));
+        } catch (TelegramApiException e) {
+            log.error("Failed to edit grid", e);
         }
     }
 
-    private void onComments(CallbackQuery cb, String osmId) {
+    private void handleGridInfo(CallbackQuery cb, String data) {
+        StationView s = stationAt(cb.getMessage().getChatId(), parseIndex(data.substring(CB_GRID_INFO.length())));
+        if (s == null) {
+            answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
+            return;
+        }
+        answerAlert(cb.getId(), infoText(s));
+    }
+
+    private void handleGridFuel(CallbackQuery cb, String data) {
+        String[] parts = data.substring(CB_GRID_FUEL.length()).split(":");
+        if (parts.length != 2) {
+            answerCallback(cb.getId(), null);
+            return;
+        }
+        int gradeIdx = parseIndex(parts[1]);
+        StationView s = stationAt(cb.getMessage().getChatId(), parseIndex(parts[0]));
+        if (s == null || gradeIdx < 0 || gradeIdx >= GRADES.length) {
+            answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
+            return;
+        }
+        String grade = GRADES[gradeIdx];
+        answerCallback(cb.getId(), grade + ": " + (NearbyFormatter.hasFuel(s.fuelsNow(), grade) ? "есть" : "нет"));
+    }
+
+    private void handleGridComments(CallbackQuery cb, String data) {
+        StationView s = stationAt(cb.getMessage().getChatId(), parseIndex(data.substring(CB_GRID_CMT.length())));
+        if (s == null) {
+            answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
+            return;
+        }
+        openComments(cb, s.osmId());
+    }
+
+    private void openComments(CallbackQuery cb, String osmId) {
         if (!registration.isApproved(cb.getFrom().getId())) {
             answerCallback(cb.getId(), "Нужен доступ.");
             return;
@@ -361,8 +380,91 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
                 .chatId(cb.getMessage().getChatId())
                 .text(text)
                 .parseMode("HTML")
-                .replyMarkup(singleButton("✖ Закрыть", CB_COMMENTS_CLOSE))
+                .replyMarkup(InlineKeyboardMarkup.builder().keyboardRow(rowOf(btn("✖ Закрыть", CB_COMMENTS_CLOSE))).build())
                 .build());
+    }
+
+    // ---- grid building ----
+
+    private String gridTitle(NearbyResult result) {
+        if (result.stations().isEmpty()) {
+            return "Рядом ничего не нашлось. Попробуй ещё раз позже.";
+        }
+        return "⛽ <b>АЗС рядом</b> — нажми на название или марку для деталей";
+    }
+
+    private InlineKeyboardMarkup gridKeyboard(double lat, double lon, NearbyResult result) {
+        var builder = InlineKeyboardMarkup.builder();
+        if (result.stations().isEmpty()) {
+            builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
+            return builder.build();
+        }
+
+        InlineKeyboardRow header = new InlineKeyboardRow();
+        header.add(btn("АЗС", CB_GRID_NOOP));
+        for (String grade : GRADES) {
+            header.add(btn(grade, CB_GRID_NOOP));
+        }
+        header.add(btn("🗺", CB_GRID_NOOP));
+        header.add(btn("💬", CB_GRID_NOOP));
+        builder.keyboardRow(header);
+
+        int limit = Math.min(result.stations().size(), MAX_ROWS);
+        for (int i = 0; i < limit; i++) {
+            StationView s = result.stations().get(i);
+            InlineKeyboardRow row = new InlineKeyboardRow();
+            row.add(btn(nameCell(s), CB_GRID_INFO + i));
+            for (int g = 0; g < GRADES.length; g++) {
+                row.add(btn(NearbyFormatter.hasFuel(s.fuelsNow(), GRADES[g]) ? "✅" : "➖", CB_GRID_FUEL + i + ":" + g));
+            }
+            row.add(urlBtn("🗺", NearbyFormatter.routeUrl(lat, lon, s.lat(), s.lon())));
+            row.add(btn("💬", CB_GRID_CMT + i));
+            builder.keyboardRow(row);
+        }
+
+        builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
+        return builder.build();
+    }
+
+    private String nameCell(StationView s) {
+        String name = s.brand() == null ? "" : s.brand();
+        if (name.length() > 7) {
+            name = name.substring(0, 6) + "…";
+        }
+        return s.status().emoji() + name;
+    }
+
+    private String infoText(StationView s) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(s.status().emoji()).append(' ').append(s.brand());
+        if (!s.addr().isBlank()) {
+            sb.append('\n').append(s.addr());
+        }
+        sb.append('\n').append(String.format(Locale.ROOT, "%.1f", s.distanceKm())).append(" км");
+        if (!s.fuelsNow().isBlank()) {
+            sb.append("\nСейчас: ").append(s.fuelsNow().replace(",", ", "));
+        } else if (!s.detail().isBlank()) {
+            sb.append('\n').append(s.detail());
+        }
+        String text = sb.toString();
+        return text.length() > 200 ? text.substring(0, 199) : text;
+    }
+
+    private StationView stationAt(long chatId, int index) {
+        GridState state = gridByChat.get(chatId);
+        if (state == null || index < 0) {
+            return null;
+        }
+        List<StationView> stations = state.result().stations();
+        return index < stations.size() ? stations.get(index) : null;
+    }
+
+    private static int parseIndex(String raw) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private static double[] parsePoint(String latLon) {
@@ -377,6 +479,10 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         }
     }
 
+    private static String point(double lat, double lon) {
+        return String.format(Locale.ROOT, "%.5f:%.5f", lat, lon);
+    }
+
     // ---- callbacks ----
 
     private void handleCallback(CallbackQuery cb) {
@@ -385,13 +491,19 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             handleRegistrationDecision(cb, data);
         } else if (data.equals(CB_NEARBY)) {
             onNearbyCallback(cb);
-        } else if (data.startsWith(CB_REFRESH)) {
-            handleRefresh(cb, data);
+        } else if (data.equals(CB_GRID_NOOP)) {
+            answerCallback(cb.getId());
+        } else if (data.startsWith(CB_GRID_REFRESH)) {
+            handleGridRefresh(cb, data);
+        } else if (data.startsWith(CB_GRID_INFO)) {
+            handleGridInfo(cb, data);
+        } else if (data.startsWith(CB_GRID_FUEL)) {
+            handleGridFuel(cb, data);
+        } else if (data.startsWith(CB_GRID_CMT)) {
+            handleGridComments(cb, data);
         } else if (data.equals(CB_COMMENTS_CLOSE)) {
             answerCallback(cb.getId());
             deleteMessage(cb.getMessage().getChatId(), cb.getMessage().getMessageId());
-        } else if (data.startsWith(CB_COMMENTS)) {
-            onComments(cb, data.substring(CB_COMMENTS.length()));
         } else {
             answerCallback(cb.getId(), "Неизвестное действие.");
         }
@@ -442,20 +554,12 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     private void sendRequestCard(long adminChatId, BotUser requester) {
         InlineKeyboardRow row = new InlineKeyboardRow();
-        row.add(InlineKeyboardButton.builder()
-                .text("✅ Одобрить")
-                .callbackData(CB_APPROVE + requester.getUserId())
-                .build());
-        row.add(InlineKeyboardButton.builder()
-                .text("🚫 Отклонить")
-                .callbackData(CB_REJECT + requester.getUserId())
-                .build());
-        InlineKeyboardMarkup markup = InlineKeyboardMarkup.builder().keyboardRow(row).build();
-
+        row.add(btn("✅ Одобрить", CB_APPROVE + requester.getUserId()));
+        row.add(btn("🚫 Отклонить", CB_REJECT + requester.getUserId()));
         send(SendMessage.builder()
                 .chatId(adminChatId)
                 .text("🆕 Запрос доступа: " + display(requester))
-                .replyMarkup(markup)
+                .replyMarkup(InlineKeyboardMarkup.builder().keyboardRow(row).build())
                 .build());
     }
 
@@ -499,10 +603,18 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     // ---- telegram I/O helpers ----
 
-    private InlineKeyboardMarkup singleButton(String text, String callbackData) {
+    private InlineKeyboardButton btn(String text, String callbackData) {
+        return InlineKeyboardButton.builder().text(text).callbackData(callbackData).build();
+    }
+
+    private InlineKeyboardButton urlBtn(String text, String url) {
+        return InlineKeyboardButton.builder().text(text).url(url).build();
+    }
+
+    private InlineKeyboardRow rowOf(InlineKeyboardButton button) {
         InlineKeyboardRow row = new InlineKeyboardRow();
-        row.add(InlineKeyboardButton.builder().text(text).callbackData(callbackData).build());
-        return InlineKeyboardMarkup.builder().keyboardRow(row).build();
+        row.add(button);
+        return row;
     }
 
     private void sendText(long chatId, String text) {
@@ -546,6 +658,18 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
                 builder.text(text);
             }
             client.execute(builder.build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to answer callback {}", callbackId, e);
+        }
+    }
+
+    private void answerAlert(String callbackId, String text) {
+        try {
+            client.execute(AnswerCallbackQuery.builder()
+                    .callbackQueryId(callbackId)
+                    .text(text)
+                    .showAlert(true)
+                    .build());
         } catch (TelegramApiException e) {
             log.error("Failed to answer callback {}", callbackId, e);
         }

@@ -104,6 +104,15 @@ class FuelMappingTest {
     }
 
     @Test
+    void hasFuelMatchesExactGradeTokens() {
+        assertThat(NearbyFormatter.hasFuel("92,95,95+,100,ДТ", "95")).isTrue();
+        assertThat(NearbyFormatter.hasFuel("92,95,95+,100,ДТ", "95+")).isTrue();
+        assertThat(NearbyFormatter.hasFuel("92,95,95+,100,ДТ", "98")).isFalse();
+        assertThat(NearbyFormatter.hasFuel("95+", "95")).isFalse(); // exact token, no substring match
+        assertThat(NearbyFormatter.hasFuel("", "92")).isFalse();
+    }
+
+    @Test
     void routeUrlIsBuiltFromCoordinates() {
         String url = NearbyFormatter.routeUrl(55.70, 37.60, 55.61, 37.61);
         assertThat(url).isEqualTo("https://yandex.ru/maps/?rtext=55.700000,37.600000~55.610000,37.610000&rtt=auto");

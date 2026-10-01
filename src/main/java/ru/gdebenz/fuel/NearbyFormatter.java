@@ -116,6 +116,19 @@ public class NearbyFormatter {
         return "<blockquote expandable>" + body + "</blockquote>\n";
     }
 
+    /** Whether a specific grade (e.g. "95", "95+") is currently available, by exact token match. */
+    public static boolean hasFuel(String fuelsNow, String grade) {
+        if (fuelsNow == null || fuelsNow.isBlank()) {
+            return false;
+        }
+        for (String token : fuelsNow.split(",")) {
+            if (token.trim().equalsIgnoreCase(grade)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Yandex Maps driving route from the user's point to the station (built ourselves, no API). */
     public static String routeUrl(double fromLat, double fromLon, double toLat, double toLon) {
         return String.format(Locale.ROOT,
