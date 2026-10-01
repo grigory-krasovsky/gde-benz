@@ -32,6 +32,7 @@ import ru.gdebenz.fuel.NearbyResult;
 import ru.gdebenz.fuel.StationView;
 import ru.gdebenz.fuel.tbank.TbankService;
 import ru.gdebenz.fuel.tbank.TbankSnapshot;
+import ru.gdebenz.fuel.tbank.TbankStation;
 import ru.gdebenz.user.BotUser;
 import ru.gdebenz.user.RegistrationService;
 import ru.gdebenz.user.TgUser;
@@ -39,6 +40,7 @@ import ru.gdebenz.user.TgUser;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -47,7 +49,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Registration: {@code /register}; the first registrant becomes admin, others wait for
  * inline approve/reject. Nearby: approved users share a location and get a single message
  * whose inline keyboard is an aligned grid — a header row plus one row per station
- * (name, fuel columns 92/95/95+/98/100 as ✅/➖, route, comments). Tapping the name or a fuel
+ * (name, fuel columns 92/95/98/100 as a blended gdebenz/T-Bank confidence %, route, comments). Tapping the name or a fuel
  * cell shows a popup; Refresh edits the same message in place.
  */
 @Component
@@ -62,12 +64,12 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_GRID_INFO = "g:i:";
     private static final String CB_GRID_FUEL = "g:f:";
     private static final String CB_GRID_CMT = "g:c:";
-    private static final String CB_GRID_TBANK = "g:t:";
     private static final String CB_GRID_NOOP = "g:noop";
     private static final String CB_COMMENTS_CLOSE = "cmt:close";
 
     private static final String[] GRADES = {"92", "95", "98", "100"};
     private static final int MAX_ROWS = 8;
+    private static final int NAME_MAX = 10;
 
     private final String botToken;
     private final TelegramClient client;
@@ -353,47 +355,44 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             answerCallback(cb.getId(), null);
             return;
         }
+        long chatId = cb.getMessage().getChatId();
         int gradeIdx = parseIndex(parts[1]);
-        StationView s = stationAt(cb.getMessage().getChatId(), parseIndex(parts[0]));
-        if (s == null || gradeIdx < 0 || gradeIdx >= GRADES.length) {
+        StationView s = stationAt(chatId, parseIndex(parts[0]));
+        GridState state = gridByChat.get(chatId);
+        if (s == null || state == null || gradeIdx < 0 || gradeIdx >= GRADES.length) {
             answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
             return;
         }
         String grade = GRADES[gradeIdx];
-        answerCallback(cb.getId(), grade + ": " + (NearbyFormatter.hasFuelColumn(s.fuelsNow(), grade) ? "есть" : "нет"));
+        answerAlert(cb.getId(), NearbyFormatter.fuelPopup(s, grade, state.tbank().match(s.lat(), s.lon(), s.brand())));
     }
 
-    private void handleGridTbank(CallbackQuery cb, String data) {
+    private void handleGridComments(CallbackQuery cb, String data) {
         long chatId = cb.getMessage().getChatId();
-        StationView s = stationAt(chatId, parseIndex(data.substring(CB_GRID_TBANK.length())));
+        StationView s = stationAt(chatId, parseIndex(data.substring(CB_GRID_CMT.length())));
         GridState state = gridByChat.get(chatId);
         if (s == null || state == null) {
             answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
             return;
         }
-        answerAlert(cb.getId(), formatter.formatTbankPopup(state.tbank().match(s.lat(), s.lon(), s.brand())));
+        openComments(cb, s, state.tbank());
     }
 
-    private void handleGridComments(CallbackQuery cb, String data) {
-        StationView s = stationAt(cb.getMessage().getChatId(), parseIndex(data.substring(CB_GRID_CMT.length())));
-        if (s == null) {
-            answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
-            return;
-        }
-        openComments(cb, s.osmId());
-    }
-
-    private void openComments(CallbackQuery cb, String osmId) {
+    private void openComments(CallbackQuery cb, StationView s, TbankSnapshot snapshot) {
         if (!registration.isApproved(cb.getFrom().getId())) {
             answerCallback(cb.getId(), "Нужен доступ.");
             return;
         }
         String text;
         try {
-            text = formatter.formatComments(fuel.comments(osmId));
+            text = formatter.formatComments(fuel.comments(s.osmId()));
         } catch (GdeBenzApiClient.ApiException e) {
             answerCallback(cb.getId(), "Не удалось загрузить отметки.");
             return;
+        }
+        Optional<TbankStation> match = snapshot.match(s.lat(), s.lon(), s.brand());
+        if (match.isPresent()) {
+            text = text + "\n\n" + formatter.formatTbankPopup(match);
         }
         answerCallback(cb.getId());
         send(SendMessage.builder()
@@ -425,7 +424,6 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         for (String grade : GRADES) {
             header.add(btn(grade, CB_GRID_NOOP));
         }
-        header.add(btn("Т‑Б", CB_GRID_NOOP));
         header.add(btn("🗺", CB_GRID_NOOP));
         header.add(btn("💬", CB_GRID_NOOP));
         builder.keyboardRow(header);
@@ -433,12 +431,12 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         int limit = Math.min(result.stations().size(), MAX_ROWS);
         for (int i = 0; i < limit; i++) {
             StationView s = result.stations().get(i);
+            Optional<TbankStation> tb = snapshot.match(s.lat(), s.lon(), s.brand());
             InlineKeyboardRow row = new InlineKeyboardRow();
             row.add(btn(nameCell(s), CB_GRID_INFO + i));
             for (int g = 0; g < GRADES.length; g++) {
-                row.add(btn(NearbyFormatter.hasFuelColumn(s.fuelsNow(), GRADES[g]) ? "✅" : "➖", CB_GRID_FUEL + i + ":" + g));
+                row.add(btn(NearbyFormatter.fuelCell(s, GRADES[g], tb), CB_GRID_FUEL + i + ":" + g));
             }
-            row.add(btn(NearbyFormatter.tbankMark(snapshot.match(s.lat(), s.lon(), s.brand())), CB_GRID_TBANK + i));
             row.add(urlBtn("🗺", NearbyFormatter.routeUrl(lat, lon, s.lat(), s.lon())));
             row.add(btn("💬", CB_GRID_CMT + i));
             builder.keyboardRow(row);
@@ -450,10 +448,10 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     private String nameCell(StationView s) {
         String name = s.brand() == null ? "" : s.brand();
-        if (name.length() > 7) {
-            name = name.substring(0, 6) + "…";
+        if (name.length() > NAME_MAX) {
+            name = name.substring(0, NAME_MAX - 1) + "…";
         }
-        return NearbyFormatter.confidenceEmoji(s.confidence()) + name;
+        return name;
     }
 
     private String infoText(StationView s) {
@@ -521,8 +519,6 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             handleGridInfo(cb, data);
         } else if (data.startsWith(CB_GRID_FUEL)) {
             handleGridFuel(cb, data);
-        } else if (data.startsWith(CB_GRID_TBANK)) {
-            handleGridTbank(cb, data);
         } else if (data.startsWith(CB_GRID_CMT)) {
             handleGridComments(cb, data);
         } else if (data.equals(CB_COMMENTS_CLOSE)) {

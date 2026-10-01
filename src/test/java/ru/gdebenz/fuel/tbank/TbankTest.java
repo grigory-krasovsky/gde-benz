@@ -76,14 +76,6 @@ class TbankTest {
     }
 
     @Test
-    void tbankMarkByStatus() throws Exception {
-        TbankSnapshot snap = new TbankSnapshot(stations(), 120.0);
-        assertThat(NearbyFormatter.tbankMark(snap.match(55.619990, 37.542787, "Роснефть"))).isEqualTo("✅");
-        assertThat(NearbyFormatter.tbankMark(Optional.empty())).isEqualTo("·");
-        assertThat(NearbyFormatter.tbankMark(snap.match(55.630914, 37.467478, "АВТО ГАЗ"))).isEqualTo("➖"); // no_data
-    }
-
-    @Test
     void formatsTbankPopup() throws Exception {
         TbankSnapshot snap = new TbankSnapshot(stations(), 120.0);
         Clock clock = Clock.fixed(Instant.parse("2026-10-01T11:30:00Z"), ZoneOffset.UTC);

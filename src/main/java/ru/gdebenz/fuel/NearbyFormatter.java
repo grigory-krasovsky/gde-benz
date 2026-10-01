@@ -119,28 +119,74 @@ public class NearbyFormatter {
         return "<blockquote expandable>" + body + "</blockquote>\n";
     }
 
-    /** Confidence tier emoji: 🟢 high (>=0.8), 🟡 medium (>=0.5), 🔴 low. */
-    public static String confidenceEmoji(double confidence) {
-        if (confidence >= 0.8) {
-            return "🟢";
+    /** Grid cell for one fuel column: blended confidence "NN%" when gdebenz lists it now, else "—". */
+    public static String fuelCell(StationView s, String column, Optional<TbankStation> tbank) {
+        if (!hasFuelColumn(s.fuelsNow(), column)) {
+            return "—";
         }
-        if (confidence >= 0.5) {
-            return "🟡";
-        }
-        return "🔴";
+        return blendedConfidencePercent(s.confidence(), column, tbank) + "%";
     }
 
-    /** T-Bank approval cell: ✅ confirmed by purchases, 🟡 maybe, ➖ matched but no confirmation, · no data. */
-    public static String tbankMark(Optional<TbankStation> match) {
-        if (match.isEmpty()) {
-            return "·";
+    /**
+     * Confidence that a specific grade is available now, as a percentage (5% steps, capped at 99).
+     * Base is gdebenz's station confidence; a T-Bank confirmation for that grade only raises it
+     * toward 100% — T-Bank under-reports, so its "no"/"no data" never lowers the number.
+     */
+    public static int blendedConfidencePercent(double base, String column, Optional<TbankStation> tbank) {
+        double value = clamp01(base);
+        double boost = tbankBoost(column, tbank);
+        if (boost > 0.0) {
+            value = value + boost * (1.0 - value);
         }
-        String status = match.get().status() == null ? "" : match.get().status();
-        return switch (status) {
-            case "available" -> "✅";
-            case "maybe_available" -> "🟡";
-            default -> "➖";
+        int pct = (int) (Math.round(value * 20.0) * 5L); // nearest 5%
+        return Math.max(0, Math.min(99, pct));
+    }
+
+    private static double tbankBoost(String column, Optional<TbankStation> tbank) {
+        if (tbank.isEmpty() || tbank.get().statusByFuelType() == null) {
+            return 0.0;
+        }
+        String status = tbank.get().statusByFuelType().get(column);
+        double weight = switch (status == null ? "" : status) {
+            case "available" -> 0.6;
+            case "maybe_available" -> 0.25;
+            default -> 0.0; // not_available / no_data: T-Bank only confirms, never denies
         };
+        if (weight == 0.0) {
+            return 0.0;
+        }
+        Double confidence = tbank.get().confidence();
+        return weight * (confidence == null ? 1.0 : clamp01(confidence));
+    }
+
+    /** Popup breakdown for a tapped fuel cell: the blended %, plus the raw gdebenz and T-Bank reads. */
+    public static String fuelPopup(StationView s, String column, Optional<TbankStation> tbank) {
+        if (!hasFuelColumn(s.fuelsNow(), column)) {
+            return column + ": по gdebenz сейчас нет";
+        }
+        int pct = blendedConfidencePercent(s.confidence(), column, tbank);
+        StringBuilder sb = new StringBuilder(column + ": есть · уверенность " + pct + "%\n");
+        sb.append("gdebenz ").append(Math.round(clamp01(s.confidence()) * 100.0)).append('%');
+        String word = tbankGradeWord(column, tbank);
+        if (word != null) {
+            sb.append(" · T-Банк: ").append(word);
+        }
+        return sb.toString();
+    }
+
+    private static String tbankGradeWord(String column, Optional<TbankStation> tbank) {
+        if (tbank.isEmpty() || tbank.get().statusByFuelType() == null) {
+            return null;
+        }
+        String status = tbank.get().statusByFuelType().get(column);
+        return status == null ? null : tbankStatusWord(status);
+    }
+
+    private static double clamp01(double value) {
+        if (value < 0.0) {
+            return 0.0;
+        }
+        return Math.min(value, 1.0);
     }
 
     /** Popup text (plain, for a callback alert) with the T-Bank read for one station. */

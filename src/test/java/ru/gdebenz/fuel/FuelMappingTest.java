@@ -10,7 +10,10 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import ru.gdebenz.fuel.api.CommentDto;
+import ru.gdebenz.fuel.tbank.TbankStation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -104,11 +107,44 @@ class FuelMappingTest {
     }
 
     @Test
-    void confidenceEmojiByTier() {
-        assertThat(NearbyFormatter.confidenceEmoji(0.90)).isEqualTo("🟢");
-        assertThat(NearbyFormatter.confidenceEmoji(0.80)).isEqualTo("🟢");
-        assertThat(NearbyFormatter.confidenceEmoji(0.60)).isEqualTo("🟡");
-        assertThat(NearbyFormatter.confidenceEmoji(0.49)).isEqualTo("🔴");
+    void fuelCellIsDashWhenGradeAbsent() {
+        StationView s = station("92,ДТ", 0.9);
+        assertThat(NearbyFormatter.fuelCell(s, "95", Optional.empty())).isEqualTo("—");
+    }
+
+    @Test
+    void fuelCellShowsGdebenzConfidenceWhenNoTbank() {
+        StationView s = station("92,95", 0.9);
+        assertThat(NearbyFormatter.fuelCell(s, "95", Optional.empty())).isEqualTo("90%");
+    }
+
+    @Test
+    void tbankConfirmationRaisesConfidenceTowardHundred() {
+        StationView s = station("92,95", 0.9);
+        Optional<TbankStation> tb = Optional.of(tbank(Map.of("95", "available"), 0.9));
+        assertThat(NearbyFormatter.fuelCell(s, "95", tb)).isEqualTo("95%");
+    }
+
+    @Test
+    void tbankNegativeNeverLowersConfidence() {
+        StationView s = station("92,95", 0.9);
+        Optional<TbankStation> tb = Optional.of(tbank(Map.of("95", "not_available"), 0.9));
+        assertThat(NearbyFormatter.fuelCell(s, "95", tb)).isEqualTo("90%");
+    }
+
+    @Test
+    void blendedConfidenceIsCappedAt99() {
+        Optional<TbankStation> tb = Optional.of(tbank(Map.of("95", "available"), 1.0));
+        assertThat(NearbyFormatter.blendedConfidencePercent(0.98, "95", tb)).isLessThanOrEqualTo(99);
+    }
+
+    private static StationView station(String fuelsNow, double confidence) {
+        return new StationView("1", "Роснефть", "", 55.7, 37.6, 1.0,
+                FuelStatus.AVAILABLE, "", fuelsNow, 1, null, confidence);
+    }
+
+    private static TbankStation tbank(Map<String, String> byFuel, double confidence) {
+        return new TbankStation("Роснефть", 55.7, 37.6, "available", byFuel, confidence, null);
     }
 
     @Test
