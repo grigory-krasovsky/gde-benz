@@ -26,9 +26,11 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 import ru.gdebenz.config.TelegramBotProperties;
 import ru.gdebenz.fuel.FuelAvailabilityService;
+import ru.gdebenz.fuel.FuelStatus;
 import ru.gdebenz.fuel.GdeBenzApiClient;
 import ru.gdebenz.fuel.NearbyFormatter;
 import ru.gdebenz.fuel.NearbyResult;
+import ru.gdebenz.fuel.StationView;
 import ru.gdebenz.user.BotUser;
 import ru.gdebenz.user.RegistrationService;
 import ru.gdebenz.user.TgUser;
@@ -43,7 +45,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Registration: {@code /register}; the first registrant becomes admin, others wait for
  * inline approve/reject. Nearby: approved users tap an inline button, share a location via a
- * one-tap reply button, and get a single result message they can refresh in place. Transient
+ * one-tap reply button, and get a single result message they can refresh in place; each
+ * available station has a "comments" button that opens recent driver reports. Transient
  * messages (prompt, the shared location) are deleted to keep the chat clean.
  */
 @Component
@@ -55,6 +58,10 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_REJECT = "reg:reject:";
     private static final String CB_NEARBY = "nb:req";
     private static final String CB_REFRESH = "nb:ref:";
+    private static final String CB_COMMENTS = "cmt:";
+    private static final String CB_COMMENTS_CLOSE = "cmt:close";
+
+    private static final int MAX_COMMENT_BUTTONS = 6;
 
     private final String botToken;
     private final TelegramClient client;
@@ -258,15 +265,19 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         }
         deleteMessage(chatId, locationMessageId);
 
-        NearbyResult result = fetchOrNull(chatId, lat, lon);
-        if (result == null) {
+        NearbyResult result;
+        try {
+            result = fuel.nearby(lat, lon);
+        } catch (GdeBenzApiClient.ApiException e) {
+            log.warn("nearby request failed for chat {}", chatId, e);
+            sendText(chatId, "Источник данных сейчас недоступен. Попробуй через минуту.");
             return;
         }
         send(SendMessage.builder()
                 .chatId(chatId)
                 .text(formatter.format(result, lat, lon))
                 .parseMode("HTML")
-                .replyMarkup(refreshKeyboard(lat, lon))
+                .replyMarkup(nearbyKeyboard(lat, lon, result))
                 .build());
     }
 
@@ -294,30 +305,62 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
                     .messageId(cb.getMessage().getMessageId())
                     .text(formatter.format(result, point[0], point[1]))
                     .parseMode("HTML")
-                    .replyMarkup(refreshKeyboard(point[0], point[1]))
+                    .replyMarkup(nearbyKeyboard(point[0], point[1], result))
                     .build());
         } catch (TelegramApiException e) {
             log.error("Failed to edit nearby result", e);
         }
     }
 
-    private NearbyResult fetchOrNull(long chatId, double lat, double lon) {
-        try {
-            return fuel.nearby(lat, lon);
-        } catch (GdeBenzApiClient.ApiException e) {
-            log.warn("nearby request failed for chat {}", chatId, e);
-            sendText(chatId, "Источник данных сейчас недоступен. Попробуй через минуту.");
-            return null;
+    private void onComments(CallbackQuery cb, String osmId) {
+        if (!registration.isApproved(cb.getFrom().getId())) {
+            answerCallback(cb.getId(), "Нужен доступ.");
+            return;
         }
+        String text;
+        try {
+            text = formatter.formatComments(fuel.comments(osmId));
+        } catch (GdeBenzApiClient.ApiException e) {
+            answerCallback(cb.getId(), "Не удалось загрузить отметки.");
+            return;
+        }
+        answerCallback(cb.getId());
+        InlineKeyboardRow row = new InlineKeyboardRow();
+        row.add(InlineKeyboardButton.builder().text("✖ Закрыть").callbackData(CB_COMMENTS_CLOSE).build());
+        send(SendMessage.builder()
+                .chatId(cb.getMessage().getChatId())
+                .text(text)
+                .parseMode("HTML")
+                .replyMarkup(InlineKeyboardMarkup.builder().keyboardRow(row).build())
+                .build());
     }
 
-    private InlineKeyboardMarkup refreshKeyboard(double lat, double lon) {
-        InlineKeyboardRow row = new InlineKeyboardRow();
-        row.add(InlineKeyboardButton.builder()
+    private InlineKeyboardMarkup nearbyKeyboard(double lat, double lon, NearbyResult result) {
+        var builder = InlineKeyboardMarkup.builder();
+
+        InlineKeyboardRow refresh = new InlineKeyboardRow();
+        refresh.add(InlineKeyboardButton.builder()
                 .text("🔄 Обновить")
                 .callbackData(String.format(Locale.ROOT, "%s%.5f:%.5f", CB_REFRESH, lat, lon))
                 .build());
-        return InlineKeyboardMarkup.builder().keyboardRow(row).build();
+        builder.keyboardRow(refresh);
+
+        int added = 0;
+        for (StationView s : result.stations()) {
+            if (added >= MAX_COMMENT_BUTTONS) {
+                break;
+            }
+            if (s.status() == FuelStatus.AVAILABLE || s.status() == FuelStatus.QUEUE) {
+                InlineKeyboardRow row = new InlineKeyboardRow();
+                row.add(InlineKeyboardButton.builder()
+                        .text(String.format(Locale.ROOT, "💬 %s · %.1f км", s.brand(), s.distanceKm()))
+                        .callbackData(CB_COMMENTS + s.osmId())
+                        .build());
+                builder.keyboardRow(row);
+                added++;
+            }
+        }
+        return builder.build();
     }
 
     private static double[] parsePoint(String latLon) {
@@ -342,6 +385,11 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             onNearbyCallback(cb);
         } else if (data.startsWith(CB_REFRESH)) {
             handleRefresh(cb, data);
+        } else if (data.equals(CB_COMMENTS_CLOSE)) {
+            answerCallback(cb.getId());
+            deleteMessage(cb.getMessage().getChatId(), cb.getMessage().getMessageId());
+        } else if (data.startsWith(CB_COMMENTS)) {
+            onComments(cb, data.substring(CB_COMMENTS.length()));
         } else {
             answerCallback(cb.getId(), "Неизвестное действие.");
         }

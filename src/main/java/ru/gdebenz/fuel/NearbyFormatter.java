@@ -34,6 +34,38 @@ public class NearbyFormatter {
         return sb.toString();
     }
 
+    /** Renders recent driver reports for one station. */
+    public String formatComments(List<CommentView> comments) {
+        if (comments.isEmpty()) {
+            return "Отметок пока нет.";
+        }
+        StringBuilder sb = new StringBuilder("💬 <b>Последние отметки</b>\n");
+        for (CommentView c : comments) {
+            sb.append('\n').append(c.status().emoji()).append(' ');
+            sb.append(c.detail().isBlank() ? statusWord(c.status()) : esc(c.detail()));
+            String fresh = freshness(c.createdAt());
+            if (fresh != null) {
+                sb.append(" · ").append(fresh);
+            }
+            if (c.onSite()) {
+                sb.append(" · на месте");
+            }
+            if (c.reliable()) {
+                sb.append(" · ✓");
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String statusWord(FuelStatus status) {
+        return switch (status) {
+            case AVAILABLE -> "есть";
+            case QUEUE -> "есть, очередь";
+            case UNAVAILABLE -> "нет";
+            case UNKNOWN -> "статус неизвестен";
+        };
+    }
+
     private String card(StationView s, double originLat, double originLon) {
         List<String> segments = segments(s.detail());
         List<String> lines = new ArrayList<>();

@@ -4,6 +4,7 @@ import java.time.Instant;
 
 /** A station prepared for display: raw status mapped, timestamp parsed. */
 public record StationView(
+        String osmId,
         String brand,
         String addr,
         double lat,

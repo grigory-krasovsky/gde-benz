@@ -9,6 +9,8 @@ import ru.gdebenz.fuel.api.NearbyResponse;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import ru.gdebenz.fuel.api.CommentDto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -93,12 +95,12 @@ class FuelMappingTest {
     }
 
     @Test
-    void parsesLastAtAsMoscowTime() {
-        Instant parsed = FuelAvailabilityService.parseLastAt("2026-10-01 07:08:08");
+    void parsesTimestampAsMoscowTime() {
+        Instant parsed = FuelAvailabilityService.parseTimestamp("2026-10-01 07:08:08");
         // 07:08:08 MSK (+03:00) == 04:08:08 UTC
         assertThat(parsed).isEqualTo(Instant.parse("2026-10-01T04:08:08Z"));
-        assertThat(FuelAvailabilityService.parseLastAt("")).isNull();
-        assertThat(FuelAvailabilityService.parseLastAt(null)).isNull();
+        assertThat(FuelAvailabilityService.parseTimestamp("")).isNull();
+        assertThat(FuelAvailabilityService.parseTimestamp(null)).isNull();
     }
 
     @Test
@@ -131,7 +133,56 @@ class FuelMappingTest {
     @Test
     void formatterHandlesEmptyResult() {
         NearbyFormatter formatter = new NearbyFormatter(Clock.systemUTC());
-        String out = formatter.format(new NearbyResult(java.util.List.of(), "2026-10-01 08:00:00"), 55.70, 37.60);
+        String out = formatter.format(new NearbyResult(List.of(), "2026-10-01 08:00:00"), 55.70, 37.60);
         assertThat(out).contains("ничего не нашлось");
+    }
+
+    private static final String COMMENTS_JSON = """
+            [
+              {"status":"yes","detail":"92,95","created_at":"2026-10-01 07:12:52","edited":false,"on_site":true,"svc":true},
+              {"status":"yes","detail":"95, ДТ · Очередь до 15 мин","created_at":"2026-10-01 05:21:58","edited":true,"author_reliable":false,"author_tier":0,"acct_ok":true},
+              {"status":"no","detail":"Перерыв","created_at":"2026-09-30 17:56:11","edited":false,"on_site":true},
+              {"status":"yes","detail":"92, 95, ДТ · Очередь 15–30 мин","created_at":"2026-09-30 14:54:57","edited":false,"author_reliable":true,"author_tier":1}
+            ]
+            """;
+
+    private List<CommentDto> parseComments() throws Exception {
+        return List.of(mapper().readValue(COMMENTS_JSON, CommentDto[].class));
+    }
+
+    @Test
+    void parsesCommentsIncludingTrustFlags() throws Exception {
+        List<CommentDto> comments = parseComments();
+        assertThat(comments).hasSize(4);
+        assertThat(comments.get(0).onSite()).isTrue();
+        assertThat(comments.get(0).svc()).isTrue();
+        assertThat(comments.get(1).edited()).isTrue();
+        assertThat(comments.get(3).authorReliable()).isTrue();
+        assertThat(comments.get(3).authorTier()).isEqualTo(1);
+    }
+
+    @Test
+    void mapsCommentsToViews() throws Exception {
+        List<CommentView> views = FuelAvailabilityService.mapComments(parseComments());
+
+        assertThat(views).hasSize(4);
+        assertThat(views.get(0).onSite()).isTrue();
+        assertThat(views.get(2).status()).isEqualTo(FuelStatus.UNAVAILABLE);
+        assertThat(views.get(3).reliable()).isTrue();   // author_tier 1 implies reliable
+        assertThat(views.get(0).createdAt()).isNotNull();
+    }
+
+    @Test
+    void formatsCommentsWithMarkers() throws Exception {
+        List<CommentView> views = FuelAvailabilityService.mapComments(parseComments());
+        Clock clock = Clock.fixed(Instant.parse("2026-10-01T05:00:00Z"), ZoneOffset.UTC);
+
+        String out = new NearbyFormatter(clock).formatComments(views);
+
+        assertThat(out).contains("💬");
+        assertThat(out).contains("на месте");
+        assertThat(out).contains("✓");          // reliable marker
+        assertThat(out).contains("Перерыв");
+        assertThat(out).contains("🔴");          // the "no" report
     }
 }

@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import ru.gdebenz.config.GdeBenzApiProperties;
+import ru.gdebenz.fuel.api.CommentDto;
 import ru.gdebenz.fuel.api.NearbyResponse;
 
 import java.io.IOException;
@@ -17,11 +18,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Clock;
+import java.util.List;
 import java.util.Locale;
 
 /**
- * Talks to gdebenz.ru/api/nearby. Uses a browser User-Agent + Referer and a shared cookie jar
- * (DDoS-Guard), forces Locale.ROOT in the URL, and retries with backoff on 5xx / I/O errors.
+ * Talks to the gdebenz.ru API. Uses a browser User-Agent + Referer and a shared cookie jar
+ * (DDoS-Guard), forces Locale.ROOT in URLs, and retries with backoff on 5xx / I/O errors.
  * Deliberately does not request gzip to keep response handling simple.
  */
 @Component
@@ -54,6 +56,25 @@ public class GdeBenzApiClient {
     public NearbyResponse nearby(double lat, double lon) {
         String url = String.format(Locale.ROOT, "%s?lat=%.5f&lon=%.5f&radius_km=%s&_=%d",
                 props.baseUrl(), lat, lon, formatRadius(props.radiusKm()), clock.millis());
+        try {
+            return mapper.readValue(fetch(url), NearbyResponse.class);
+        } catch (IOException e) {
+            throw new ApiException("failed to parse nearby response", e);
+        }
+    }
+
+    public List<CommentDto> comments(String osmId, int limit) {
+        String url = String.format(Locale.ROOT, "%s/%s/recent?limit=%d&_=%d",
+                props.commentsUrl(), osmId, limit, clock.millis());
+        try {
+            return List.of(mapper.readValue(fetch(url), CommentDto[].class));
+        } catch (IOException e) {
+            throw new ApiException("failed to parse comments response", e);
+        }
+    }
+
+    /** GET the URL with browser headers, retrying with backoff on 5xx / I/O; returns the body. */
+    private String fetch(String url) {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(props.requestTimeout())
                 .header("User-Agent", props.userAgent())
@@ -67,11 +88,10 @@ public class GdeBenzApiClient {
         for (int attempt = 0; attempt <= props.maxRetries(); attempt++) {
             try {
                 HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-                int code = response.statusCode();
-                if (code != 200) {
-                    throw new ApiException("gdebenz returned HTTP " + code);
+                if (response.statusCode() != 200) {
+                    throw new ApiException("gdebenz returned HTTP " + response.statusCode());
                 }
-                return mapper.readValue(response.body(), NearbyResponse.class);
+                return response.body();
             } catch (ApiException e) {
                 last = e;
                 log.warn("gdebenz request failed (attempt {}/{}): {}", attempt + 1, props.maxRetries() + 1, e.getMessage());

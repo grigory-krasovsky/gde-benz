@@ -5,12 +5,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.time.Duration;
 
 /**
- * Settings for the gdebenz.ru /api/nearby client, bound from {@code gdebenz.api.*}.
+ * Settings for the gdebenz.ru API client, bound from {@code gdebenz.api.*}.
  * Browser-like User-Agent and Referer are required to pass DDoS-Guard.
  */
 @ConfigurationProperties(prefix = "gdebenz.api")
 public record GdeBenzApiProperties(
         String baseUrl,
+        String commentsUrl,
         String userAgent,
         String referer,
         Duration connectTimeout,
@@ -18,11 +19,15 @@ public record GdeBenzApiProperties(
         Duration cacheTtl,
         double radiusKm,
         int maxResults,
+        int commentsLimit,
         int maxRetries) {
 
     public GdeBenzApiProperties {
         if (baseUrl == null || baseUrl.isBlank()) {
             baseUrl = "https://gdebenz.ru/api/nearby";
+        }
+        if (commentsUrl == null || commentsUrl.isBlank()) {
+            commentsUrl = "https://gdebenz.ru/api/comments";
         }
         if (userAgent == null || userAgent.isBlank()) {
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -45,6 +50,9 @@ public record GdeBenzApiProperties(
         }
         if (maxResults <= 0) {
             maxResults = 10;
+        }
+        if (commentsLimit <= 0) {
+            commentsLimit = 12;
         }
         if (maxRetries < 0) {
             maxRetries = 2;
