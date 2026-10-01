@@ -83,10 +83,7 @@ public class NearbyFormatter {
         if (queue != null) {
             lines.add(esc(queue));
         }
-        // 4) route link
-        lines.add("<a href=\"" + esc(routeUrl(originLat, originLon, s.lat(), s.lon())) + "\">🗺 Маршрут</a>");
-
-        // 5) everything else, collapsed
+        // Route is a URL button on the message (not a text link) to avoid link-preview images.
         return String.join("\n", lines) + "\n" + collapsible(s, segments);
     }
 
@@ -120,7 +117,7 @@ public class NearbyFormatter {
     }
 
     /** Yandex Maps driving route from the user's point to the station (built ourselves, no API). */
-    static String routeUrl(double fromLat, double fromLon, double toLat, double toLon) {
+    public static String routeUrl(double fromLat, double fromLon, double toLat, double toLon) {
         return String.format(Locale.ROOT,
                 "https://yandex.ru/maps/?rtext=%.6f,%.6f~%.6f,%.6f&rtt=auto",
                 fromLat, fromLon, toLat, toLon);

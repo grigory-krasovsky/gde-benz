@@ -123,11 +123,10 @@ class FuelMappingTest {
         assertThat(out).contains("⏳");          // queue extracted from detail onto the headline
         assertThat(out).contains("<blockquote expandable>"); // collapsible secondary details
         assertThat(out).contains("Загородное шоссе, 2Б");     // address lives in the blockquote
-        assertThat(out).contains("🗺 Маршрут");
-        assertThat(out).contains("yandex.ru/maps/?rtext=");
         assertThat(out).contains("мин назад");
         assertThat(out).contains("<b>Роснефть</b>");
         assertThat(out).doesNotContain("данные на");          // data timestamp removed
+        assertThat(out).doesNotContain("Маршрут");            // route is a URL button now, not text
     }
 
     @Test

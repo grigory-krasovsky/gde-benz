@@ -313,11 +313,20 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         }
 
         for (StationView s : result.stations()) {
+            InlineKeyboardRow buttons = new InlineKeyboardRow();
+            buttons.add(InlineKeyboardButton.builder()
+                    .text("🗺 Маршрут")
+                    .url(NearbyFormatter.routeUrl(lat, lon, s.lat(), s.lon()))
+                    .build());
+            buttons.add(InlineKeyboardButton.builder()
+                    .text("💬 Отзывы")
+                    .callbackData(CB_COMMENTS + s.osmId())
+                    .build());
             Integer id = sendReturningId(SendMessage.builder()
                     .chatId(chatId)
                     .text(formatter.formatStation(s, lat, lon))
                     .parseMode("HTML")
-                    .replyMarkup(singleButton("💬 Отзывы", CB_COMMENTS + s.osmId()))
+                    .replyMarkup(InlineKeyboardMarkup.builder().keyboardRow(buttons).build())
                     .build());
             if (id != null) {
                 ids.add(id);
