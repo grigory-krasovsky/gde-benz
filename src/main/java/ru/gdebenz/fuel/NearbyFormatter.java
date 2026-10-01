@@ -127,6 +127,14 @@ public class NearbyFormatter {
         return "🔴";
     }
 
+    /** Availability for a grid column; the "95" column also counts "95+". */
+    public static boolean hasFuelColumn(String fuelsNow, String column) {
+        if ("95".equals(column)) {
+            return hasFuel(fuelsNow, "95") || hasFuel(fuelsNow, "95+");
+        }
+        return hasFuel(fuelsNow, column);
+    }
+
     /** Whether a specific grade (e.g. "95", "95+") is currently available, by exact token match. */
     public static boolean hasFuel(String fuelsNow, String grade) {
         if (fuelsNow == null || fuelsNow.isBlank()) {

@@ -112,6 +112,15 @@ class FuelMappingTest {
     }
 
     @Test
+    void hasFuelColumnMerges95Plus() {
+        assertThat(NearbyFormatter.hasFuelColumn("95+", "95")).isTrue();   // 95+ counts as 95
+        assertThat(NearbyFormatter.hasFuelColumn("95", "95")).isTrue();
+        assertThat(NearbyFormatter.hasFuelColumn("92,ДТ", "95")).isFalse();
+        assertThat(NearbyFormatter.hasFuelColumn("92", "92")).isTrue();
+        assertThat(NearbyFormatter.hasFuelColumn("95+", "98")).isFalse();
+    }
+
+    @Test
     void hasFuelMatchesExactGradeTokens() {
         assertThat(NearbyFormatter.hasFuel("92,95,95+,100,ДТ", "95")).isTrue();
         assertThat(NearbyFormatter.hasFuel("92,95,95+,100,ДТ", "95+")).isTrue();

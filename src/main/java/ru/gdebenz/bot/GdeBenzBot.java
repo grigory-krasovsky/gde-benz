@@ -63,7 +63,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_GRID_NOOP = "g:noop";
     private static final String CB_COMMENTS_CLOSE = "cmt:close";
 
-    private static final String[] GRADES = {"92", "95", "95+", "98", "100"};
+    private static final String[] GRADES = {"92", "95", "98", "100"};
     private static final int MAX_ROWS = 8;
 
     private final String botToken;
@@ -353,7 +353,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             return;
         }
         String grade = GRADES[gradeIdx];
-        answerCallback(cb.getId(), grade + ": " + (NearbyFormatter.hasFuel(s.fuelsNow(), grade) ? "есть" : "нет"));
+        answerCallback(cb.getId(), grade + ": " + (NearbyFormatter.hasFuelColumn(s.fuelsNow(), grade) ? "есть" : "нет"));
     }
 
     private void handleGridComments(CallbackQuery cb, String data) {
@@ -417,7 +417,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             InlineKeyboardRow row = new InlineKeyboardRow();
             row.add(btn(nameCell(s), CB_GRID_INFO + i));
             for (int g = 0; g < GRADES.length; g++) {
-                row.add(btn(NearbyFormatter.hasFuel(s.fuelsNow(), GRADES[g]) ? "✅" : "➖", CB_GRID_FUEL + i + ":" + g));
+                row.add(btn(NearbyFormatter.hasFuelColumn(s.fuelsNow(), GRADES[g]) ? "✅" : "➖", CB_GRID_FUEL + i + ":" + g));
             }
             row.add(urlBtn("🗺", NearbyFormatter.routeUrl(lat, lon, s.lat(), s.lon())));
             row.add(btn("💬", CB_GRID_CMT + i));
