@@ -30,6 +30,8 @@ import ru.gdebenz.fuel.GdeBenzApiClient;
 import ru.gdebenz.fuel.NearbyFormatter;
 import ru.gdebenz.fuel.NearbyResult;
 import ru.gdebenz.fuel.StationView;
+import ru.gdebenz.fuel.tbank.TbankService;
+import ru.gdebenz.fuel.tbank.TbankSnapshot;
 import ru.gdebenz.user.BotUser;
 import ru.gdebenz.user.RegistrationService;
 import ru.gdebenz.user.TgUser;
@@ -60,6 +62,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_GRID_INFO = "g:i:";
     private static final String CB_GRID_FUEL = "g:f:";
     private static final String CB_GRID_CMT = "g:c:";
+    private static final String CB_GRID_TBANK = "g:t:";
     private static final String CB_GRID_NOOP = "g:noop";
     private static final String CB_COMMENTS_CLOSE = "cmt:close";
 
@@ -70,6 +73,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private final TelegramClient client;
     private final RegistrationService registration;
     private final FuelAvailabilityService fuel;
+    private final TbankService tbank;
     private final NearbyFormatter formatter;
 
     /** Per-chat id of the "share your location" prompt, so we can delete it afterwards. */
@@ -77,16 +81,17 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     /** Per-chat current grid state so callbacks can resolve a station by its row index. */
     private final Map<Long, GridState> gridByChat = new ConcurrentHashMap<>();
 
-    private record GridState(double lat, double lon, NearbyResult result, Integer messageId) {
+    private record GridState(double lat, double lon, NearbyResult result, TbankSnapshot tbank, Integer messageId) {
     }
 
     public GdeBenzBot(TelegramBotProperties properties, TelegramClient client,
                       RegistrationService registration, FuelAvailabilityService fuel,
-                      NearbyFormatter formatter) {
+                      TbankService tbank, NearbyFormatter formatter) {
         this.botToken = properties.token();
         this.client = client;
         this.registration = registration;
         this.fuel = fuel;
+        this.tbank = tbank;
         this.formatter = formatter;
     }
 
@@ -288,13 +293,14 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         if (old != null && old.messageId() != null) {
             deleteMessage(chatId, old.messageId());
         }
+        TbankSnapshot snapshot = tbank.snapshot(lat, lon);
         Integer id = sendReturningId(SendMessage.builder()
                 .chatId(chatId)
                 .text(gridTitle(result))
                 .parseMode("HTML")
-                .replyMarkup(gridKeyboard(lat, lon, result))
+                .replyMarkup(gridKeyboard(lat, lon, result, snapshot))
                 .build());
-        gridByChat.put(chatId, new GridState(lat, lon, result, id));
+        gridByChat.put(chatId, new GridState(lat, lon, result, snapshot, id));
     }
 
     private void handleGridRefresh(CallbackQuery cb, String data) {
@@ -314,6 +320,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             answerCallback(cb.getId(), "Источник недоступен, попробуй позже.");
             return;
         }
+        TbankSnapshot snapshot = tbank.snapshot(point[0], point[1]);
         answerCallback(cb.getId(), "Обновлено");
         long chatId = cb.getMessage().getChatId();
         Integer messageId = cb.getMessage().getMessageId();
@@ -323,9 +330,9 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
                     .messageId(messageId)
                     .text(gridTitle(result))
                     .parseMode("HTML")
-                    .replyMarkup(gridKeyboard(point[0], point[1], result))
+                    .replyMarkup(gridKeyboard(point[0], point[1], result, snapshot))
                     .build());
-            gridByChat.put(chatId, new GridState(point[0], point[1], result, messageId));
+            gridByChat.put(chatId, new GridState(point[0], point[1], result, snapshot, messageId));
         } catch (TelegramApiException e) {
             log.error("Failed to edit grid", e);
         }
@@ -354,6 +361,17 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         }
         String grade = GRADES[gradeIdx];
         answerCallback(cb.getId(), grade + ": " + (NearbyFormatter.hasFuelColumn(s.fuelsNow(), grade) ? "есть" : "нет"));
+    }
+
+    private void handleGridTbank(CallbackQuery cb, String data) {
+        long chatId = cb.getMessage().getChatId();
+        StationView s = stationAt(chatId, parseIndex(data.substring(CB_GRID_TBANK.length())));
+        GridState state = gridByChat.get(chatId);
+        if (s == null || state == null) {
+            answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
+            return;
+        }
+        answerAlert(cb.getId(), formatter.formatTbankPopup(state.tbank().match(s.lat(), s.lon(), s.brand())));
     }
 
     private void handleGridComments(CallbackQuery cb, String data) {
@@ -395,7 +413,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         return "⛽ <b>АЗС рядом</b> — нажми на название или марку для деталей";
     }
 
-    private InlineKeyboardMarkup gridKeyboard(double lat, double lon, NearbyResult result) {
+    private InlineKeyboardMarkup gridKeyboard(double lat, double lon, NearbyResult result, TbankSnapshot snapshot) {
         var builder = InlineKeyboardMarkup.builder();
         if (result.stations().isEmpty()) {
             builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
@@ -407,6 +425,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         for (String grade : GRADES) {
             header.add(btn(grade, CB_GRID_NOOP));
         }
+        header.add(btn("Т‑Б", CB_GRID_NOOP));
         header.add(btn("🗺", CB_GRID_NOOP));
         header.add(btn("💬", CB_GRID_NOOP));
         builder.keyboardRow(header);
@@ -419,6 +438,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             for (int g = 0; g < GRADES.length; g++) {
                 row.add(btn(NearbyFormatter.hasFuelColumn(s.fuelsNow(), GRADES[g]) ? "✅" : "➖", CB_GRID_FUEL + i + ":" + g));
             }
+            row.add(btn(NearbyFormatter.tbankMark(snapshot.match(s.lat(), s.lon(), s.brand())), CB_GRID_TBANK + i));
             row.add(urlBtn("🗺", NearbyFormatter.routeUrl(lat, lon, s.lat(), s.lon())));
             row.add(btn("💬", CB_GRID_CMT + i));
             builder.keyboardRow(row);
@@ -501,6 +521,8 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             handleGridInfo(cb, data);
         } else if (data.startsWith(CB_GRID_FUEL)) {
             handleGridFuel(cb, data);
+        } else if (data.startsWith(CB_GRID_TBANK)) {
+            handleGridTbank(cb, data);
         } else if (data.startsWith(CB_GRID_CMT)) {
             handleGridComments(cb, data);
         } else if (data.equals(CB_COMMENTS_CLOSE)) {

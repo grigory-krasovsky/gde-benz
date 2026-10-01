@@ -1,6 +1,7 @@
 package ru.gdebenz.fuel;
 
 import org.springframework.stereotype.Component;
+import ru.gdebenz.fuel.tbank.TbankStation;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -8,6 +9,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * Renders a nearby result as a Telegram HTML message. Per station, visible lines are:
@@ -125,6 +128,68 @@ public class NearbyFormatter {
             return "🟡";
         }
         return "🔴";
+    }
+
+    /** T-Bank approval cell: ✅ confirmed by purchases, 🟡 maybe, ➖ matched but no confirmation, · no data. */
+    public static String tbankMark(Optional<TbankStation> match) {
+        if (match.isEmpty()) {
+            return "·";
+        }
+        String status = match.get().status() == null ? "" : match.get().status();
+        return switch (status) {
+            case "available" -> "✅";
+            case "maybe_available" -> "🟡";
+            default -> "➖";
+        };
+    }
+
+    /** Popup text (plain, for a callback alert) with the T-Bank read for one station. */
+    public String formatTbankPopup(Optional<TbankStation> match) {
+        if (match.isEmpty()) {
+            return "T-Банк: нет данных по этой АЗС";
+        }
+        TbankStation t = match.get();
+        StringBuilder sb = new StringBuilder("T-Банк");
+        String fuels = tbankFuelLine(t.statusByFuelType());
+        if (!fuels.isEmpty()) {
+            sb.append('\n').append(fuels);
+        }
+        if (t.confidence() != null) {
+            sb.append("\nуверенность ").append(Math.round(t.confidence() * 100)).append('%');
+        }
+        String fresh = freshness(t.lastTransactionAt());
+        if (fresh != null) {
+            sb.append("\nпокупка ").append(fresh);
+        }
+        return sb.toString();
+    }
+
+    private static String tbankFuelLine(Map<String, String> byFuel) {
+        if (byFuel == null || byFuel.isEmpty()) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        for (String grade : new String[] {"92", "95", "98", "100", "diesel"}) {
+            String value = byFuel.get(grade);
+            if (value != null) {
+                parts.add(tbankGradeLabel(grade) + " " + tbankStatusWord(value));
+            }
+        }
+        return String.join(", ", parts);
+    }
+
+    private static String tbankGradeLabel(String grade) {
+        return "diesel".equals(grade) ? "ДТ" : grade;
+    }
+
+    private static String tbankStatusWord(String status) {
+        return switch (status) {
+            case "available" -> "есть";
+            case "maybe_available" -> "возможно";
+            case "not_available" -> "нет";
+            case "no_data" -> "н/д";
+            default -> status;
+        };
     }
 
     /** Availability for a grid column; the "95" column also counts "95+". */

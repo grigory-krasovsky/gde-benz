@@ -33,6 +33,11 @@ gdebenz:
     radius-km: ${GDEBENZ_RADIUS_KM:10}
     max-results: ${GDEBENZ_MAX_RESULTS:10}
     cache-ttl: ${GDEBENZ_CACHE_TTL:60s}
+  tbank:
+    # Supplementary T-Bank Toplivo source (base-url/ca-resource defaulted in code).
+    enabled: ${GDEBENZ_TBANK_ENABLED:true}
+    radius-km: ${GDEBENZ_TBANK_RADIUS_KM:10}
+    match-radius-meters: ${GDEBENZ_TBANK_MATCH_M:120}
 
 logging:
   level:
