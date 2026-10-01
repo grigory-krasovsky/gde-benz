@@ -146,6 +146,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     private void onStart(User from, long chatId) {
         if (registration.isApproved(from.getId())) {
+            applyMenu(from.getId(), chatId);
             sendMainMenu(chatId);
         } else {
             sendText(chatId, """
@@ -173,6 +174,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             sendText(chatId, "Нужен доступ. Отправь /register, затем дождись одобрения.");
             return;
         }
+        applyMenu(from.getId(), chatId);
         sendLocationPrompt(chatId);
     }
 
@@ -579,15 +581,24 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     private void setApprovedMenu(long chatId) {
         setMenu(chatId, List.of(
-                BotCommand.builder().command("nearby").description("АЗС рядом").build(),
+                BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
                 BotCommand.builder().command("help").description("Помощь").build()));
     }
 
     private void setAdminMenu(long chatId) {
         setMenu(chatId, List.of(
-                BotCommand.builder().command("nearby").description("АЗС рядом").build(),
+                BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
                 BotCommand.builder().command("pending").description("Заявки на доступ").build(),
                 BotCommand.builder().command("help").description("Помощь").build()));
+    }
+
+    /** Re-applies the per-chat command menu so renamed commands refresh on next interaction. */
+    private void applyMenu(long userId, long chatId) {
+        if (registration.isAdmin(userId)) {
+            setAdminMenu(chatId);
+        } else if (registration.isApproved(userId)) {
+            setApprovedMenu(chatId);
+        }
     }
 
     private void setMenu(long chatId, List<BotCommand> commands) {

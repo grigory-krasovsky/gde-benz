@@ -46,7 +46,9 @@ public class FuelAvailabilityService {
     }
 
     public List<CommentView> comments(String osmId) {
-        return fromCacheOr(commentCache, osmId, () -> mapComments(client.comments(osmId, props.commentsLimit())));
+        return fromCacheOr(commentCache, osmId, () -> filterRecent(
+                mapComments(client.comments(osmId, props.commentsLimit())),
+                clock.instant(), props.commentsMaxAge()));
     }
 
     private <T> T fromCacheOr(Map<String, Cached<T>> cache, String key, java.util.function.Supplier<T> loader) {
@@ -79,6 +81,14 @@ public class FuelAvailabilityService {
                         parseTimestamp(c.createdAt()),
                         c.onSite(),
                         c.authorReliable() || c.authorTier() > 0))
+                .toList();
+    }
+
+    /** Keeps only reports no older than maxAge; drops those with an unknown timestamp. */
+    static List<CommentView> filterRecent(List<CommentView> comments, Instant now, Duration maxAge) {
+        Instant cutoff = now.minus(maxAge);
+        return comments.stream()
+                .filter(c -> c.createdAt() != null && !c.createdAt().isBefore(cutoff))
                 .toList();
     }
 

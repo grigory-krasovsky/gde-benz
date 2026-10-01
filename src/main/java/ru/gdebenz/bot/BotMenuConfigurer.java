@@ -32,9 +32,10 @@ public class BotMenuConfigurer implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         List<BotCommand> commands = List.of(
-                BotCommand.builder().command("start").description("Начать").build(),
+                BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
                 BotCommand.builder().command("register").description("Запросить доступ").build(),
-                BotCommand.builder().command("help").description("Помощь").build()
+                BotCommand.builder().command("help").description("Помощь").build(),
+                BotCommand.builder().command("start").description("Начать").build()
         );
         try {
             // No scope -> applies to the default scope (all private chats).

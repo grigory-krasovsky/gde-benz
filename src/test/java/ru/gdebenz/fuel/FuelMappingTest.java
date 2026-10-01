@@ -181,6 +181,15 @@ class FuelMappingTest {
     }
 
     @Test
+    void filtersCommentsOlderThanMaxAge() throws Exception {
+        List<CommentView> views = FuelAvailabilityService.mapComments(parseComments());
+        Instant now = Instant.parse("2026-10-01T05:00:00Z"); // 08:00 MSK
+        var recent = FuelAvailabilityService.filterRecent(views, now, java.time.Duration.ofHours(4));
+        // Only the two reports within the last 4h (07:12 and 05:21 MSK) survive.
+        assertThat(recent).hasSize(2);
+    }
+
+    @Test
     void formatsCommentsWithMarkers() throws Exception {
         List<CommentView> views = FuelAvailabilityService.mapComments(parseComments());
         Clock clock = Clock.fixed(Instant.parse("2026-10-01T05:00:00Z"), ZoneOffset.UTC);

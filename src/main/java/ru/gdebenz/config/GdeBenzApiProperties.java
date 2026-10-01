@@ -17,6 +17,7 @@ public record GdeBenzApiProperties(
         Duration connectTimeout,
         Duration requestTimeout,
         Duration cacheTtl,
+        Duration commentsMaxAge,
         double radiusKm,
         int maxResults,
         int commentsLimit,
@@ -44,6 +45,9 @@ public record GdeBenzApiProperties(
         }
         if (cacheTtl == null) {
             cacheTtl = Duration.ofSeconds(60);
+        }
+        if (commentsMaxAge == null) {
+            commentsMaxAge = Duration.ofHours(4);
         }
         if (radiusKm <= 0) {
             radiusKm = 10.0;
