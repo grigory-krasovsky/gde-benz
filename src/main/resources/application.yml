@@ -28,6 +28,11 @@ gdebenz:
   registration:
     # How long a rejected user must wait before /register is accepted again.
     reject-cooldown: ${GDEBENZ_REJECT_COOLDOWN:30m}
+  api:
+    # gdebenz.ru/api/nearby query defaults (base-url/user-agent/referer defaulted in code).
+    radius-km: ${GDEBENZ_RADIUS_KM:10}
+    max-results: ${GDEBENZ_MAX_RESULTS:10}
+    cache-ttl: ${GDEBENZ_CACHE_TTL:60s}
 
 logging:
   level:

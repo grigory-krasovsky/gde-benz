@@ -132,6 +132,13 @@ public class RegistrationService {
                 .orElse(false);
     }
 
+    @Transactional(readOnly = true)
+    public boolean isApproved(long userId) {
+        return repo.findById(userId)
+                .map(u -> u.getStatus() == RegistrationStatus.APPROVED)
+                .orElse(false);
+    }
+
     private List<Long> adminChatIds() {
         return repo.findByRole(Role.ADMIN).stream().map(BotUser::getChatId).toList();
     }
