@@ -29,7 +29,7 @@ public class NearbyFormatter {
         }
         StringBuilder sb = new StringBuilder("⛽ <b>АЗС рядом</b>\n");
         for (StationView s : result.stations()) {
-            sb.append('\n').append(card(s, originLat, originLon));
+            sb.append('\n').append(formatStation(s, originLat, originLon));
         }
         return sb.toString();
     }
@@ -66,7 +66,8 @@ public class NearbyFormatter {
         };
     }
 
-    private String card(StationView s, double originLat, double originLon) {
+    /** Renders a single station as one message body (name, fuels, queue, route, collapsed rest). */
+    public String formatStation(StationView s, double originLat, double originLon) {
         List<String> segments = segments(s.detail());
         List<String> lines = new ArrayList<>();
 
