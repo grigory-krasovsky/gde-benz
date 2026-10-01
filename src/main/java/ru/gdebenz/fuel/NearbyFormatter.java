@@ -116,6 +116,17 @@ public class NearbyFormatter {
         return "<blockquote expandable>" + body + "</blockquote>\n";
     }
 
+    /** Confidence tier emoji: 🟢 high (>=0.8), 🟡 medium (>=0.5), 🔴 low. */
+    public static String confidenceEmoji(double confidence) {
+        if (confidence >= 0.8) {
+            return "🟢";
+        }
+        if (confidence >= 0.5) {
+            return "🟡";
+        }
+        return "🔴";
+    }
+
     /** Whether a specific grade (e.g. "95", "95+") is currently available, by exact token match. */
     public static boolean hasFuel(String fuelsNow, String grade) {
         if (fuelsNow == null || fuelsNow.isBlank()) {

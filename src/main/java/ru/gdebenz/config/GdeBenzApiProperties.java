@@ -47,7 +47,7 @@ public record GdeBenzApiProperties(
             cacheTtl = Duration.ofSeconds(60);
         }
         if (commentsMaxAge == null) {
-            commentsMaxAge = Duration.ofHours(4);
+            commentsMaxAge = Duration.ofHours(6);
         }
         if (radiusKm <= 0) {
             radiusKm = 10.0;

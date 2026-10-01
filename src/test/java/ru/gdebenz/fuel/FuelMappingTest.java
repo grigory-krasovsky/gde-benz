@@ -104,6 +104,14 @@ class FuelMappingTest {
     }
 
     @Test
+    void confidenceEmojiByTier() {
+        assertThat(NearbyFormatter.confidenceEmoji(0.90)).isEqualTo("🟢");
+        assertThat(NearbyFormatter.confidenceEmoji(0.80)).isEqualTo("🟢");
+        assertThat(NearbyFormatter.confidenceEmoji(0.60)).isEqualTo("🟡");
+        assertThat(NearbyFormatter.confidenceEmoji(0.49)).isEqualTo("🔴");
+    }
+
+    @Test
     void hasFuelMatchesExactGradeTokens() {
         assertThat(NearbyFormatter.hasFuel("92,95,95+,100,ДТ", "95")).isTrue();
         assertThat(NearbyFormatter.hasFuel("92,95,95+,100,ДТ", "95+")).isTrue();

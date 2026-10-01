@@ -433,20 +433,20 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         if (name.length() > 7) {
             name = name.substring(0, 6) + "…";
         }
-        return s.status().emoji() + name;
+        return NearbyFormatter.confidenceEmoji(s.confidence()) + name;
     }
 
     private String infoText(StationView s) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(s.status().emoji()).append(' ').append(s.brand());
+        StringBuilder sb = new StringBuilder(s.brand() == null ? "" : s.brand());
         if (!s.addr().isBlank()) {
             sb.append('\n').append(s.addr());
         }
-        sb.append('\n').append(String.format(Locale.ROOT, "%.1f", s.distanceKm())).append(" км");
-        if (!s.fuelsNow().isBlank()) {
-            sb.append("\nСейчас: ").append(s.fuelsNow().replace(",", ", "));
-        } else if (!s.detail().isBlank()) {
+        sb.append('\n').append(String.format(Locale.ROOT, "%.1f", s.distanceKm())).append(" км")
+                .append(" · уверенность ").append(Math.round(s.confidence() * 100)).append('%');
+        if (!s.detail().isBlank()) {
             sb.append('\n').append(s.detail());
+        } else if (!s.fuelsNow().isBlank()) {
+            sb.append("\nСейчас: ").append(s.fuelsNow().replace(",", ", "));
         }
         String text = sb.toString();
         return text.length() > 200 ? text.substring(0, 199) : text;

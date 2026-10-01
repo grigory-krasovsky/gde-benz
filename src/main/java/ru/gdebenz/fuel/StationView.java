@@ -14,5 +14,6 @@ public record StationView(
         String detail,
         String fuelsNow,
         int confirmations,
-        Instant lastAt) {
+        Instant lastAt,
+        double confidence) {
 }

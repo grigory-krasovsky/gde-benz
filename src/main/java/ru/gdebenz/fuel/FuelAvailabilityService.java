@@ -104,7 +104,8 @@ public class FuelAvailabilityService {
                 nullToEmpty(dto.detail()),
                 nullToEmpty(dto.fuelsNow()),
                 dto.confirmations(),
-                parseTimestamp(dto.lastAt()));
+                parseTimestamp(dto.lastAt()),
+                dto.confidenceBase());
     }
 
     static Instant parseTimestamp(String raw) {
