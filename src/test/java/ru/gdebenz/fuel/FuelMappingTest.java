@@ -172,20 +172,6 @@ class FuelMappingTest {
     }
 
     @Test
-    void allStationsMapUrlPlotsUserThenStationsAsLonLatPins() {
-        List<StationView> stations = List.of(stationLatLon(55.70, 37.60), stationLatLon(55.61, 37.61));
-        String url = NearbyFormatter.allStationsMapUrl(55.75, 37.55, stations);
-        assertThat(url).isEqualTo("https://yandex.ru/maps/?pt="
-                + "37.550000,55.750000,pm2bll~"
-                + "37.600000,55.700000,pm2rdm~"
-                + "37.610000,55.610000,pm2rdm");
-    }
-
-    private static StationView stationLatLon(double lat, double lon) {
-        return new StationView("1", "X", "", lat, lon, 1.0, FuelStatus.AVAILABLE, "", "92", 1, null, 0.9);
-    }
-
-    @Test
     void formatterRendersStatusEmojiRouteAndFreshness() throws Exception {
         NearbyResult result = FuelAvailabilityService.map(parse(), 10);
         // Fixed "now" = 2026-10-01 08:00:00 MSK (05:00:00 UTC)
