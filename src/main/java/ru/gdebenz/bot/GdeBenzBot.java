@@ -442,7 +442,10 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             builder.keyboardRow(row);
         }
 
-        builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
+        InlineKeyboardRow actions = new InlineKeyboardRow();
+        actions.add(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon)));
+        actions.add(urlBtn("🗺 Все на карте", NearbyFormatter.allStationsMapUrl(lat, lon, result.stations().subList(0, limit))));
+        builder.keyboardRow(actions);
         return builder.build();
     }
 

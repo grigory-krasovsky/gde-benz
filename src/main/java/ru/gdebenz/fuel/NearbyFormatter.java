@@ -266,6 +266,19 @@ public class NearbyFormatter {
                 fromLat, fromLon, toLat, toLon);
     }
 
+    /**
+     * Yandex Maps link with the user (blue pin) and every listed station (red pins), so the driver
+     * can see at a glance which one is on their way. Built ourselves, no API key. Note: Yandex {@code pt}
+     * points are "lon,lat" (the opposite order of {@code rtext} used by {@link #routeUrl}).
+     */
+    public static String allStationsMapUrl(double originLat, double originLon, List<StationView> stations) {
+        StringBuilder pt = new StringBuilder(String.format(Locale.ROOT, "%.6f,%.6f,pm2bll", originLon, originLat));
+        for (StationView s : stations) {
+            pt.append('~').append(String.format(Locale.ROOT, "%.6f,%.6f,pm2rdm", s.lon(), s.lat()));
+        }
+        return "https://yandex.ru/maps/?pt=" + pt;
+    }
+
     private static List<String> segments(String detail) {
         List<String> out = new ArrayList<>();
         if (detail != null && !detail.isBlank()) {
