@@ -47,6 +47,9 @@ public class BotUser {
     @Column(name = "status_changed_at", nullable = false)
     private Instant statusChangedAt;
 
+    @Column(name = "fuel_filter", length = 64)
+    private String fuelFilter;
+
     protected BotUser() {
         // for JPA
     }
@@ -75,6 +78,11 @@ public class BotUser {
     public void changeStatus(RegistrationStatus newStatus, Instant now) {
         this.status = newStatus;
         this.statusChangedAt = now;
+        this.updatedAt = now;
+    }
+
+    public void setFuelFilter(String fuelFilter, Instant now) {
+        this.fuelFilter = fuelFilter;
         this.updatedAt = now;
     }
 
@@ -112,5 +120,9 @@ public class BotUser {
 
     public Instant getStatusChangedAt() {
         return statusChangedAt;
+    }
+
+    public String getFuelFilter() {
+        return fuelFilter;
     }
 }

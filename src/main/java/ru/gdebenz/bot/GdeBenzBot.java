@@ -34,6 +34,7 @@ import ru.gdebenz.fuel.tbank.TbankService;
 import ru.gdebenz.fuel.tbank.TbankSnapshot;
 import ru.gdebenz.fuel.tbank.TbankStation;
 import ru.gdebenz.user.BotUser;
+import ru.gdebenz.user.FuelFilterService;
 import ru.gdebenz.user.RegistrationService;
 import ru.gdebenz.user.TgUser;
 
@@ -41,6 +42,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -66,6 +68,10 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_GRID_CMT = "g:c:";
     private static final String CB_GRID_NOOP = "g:noop";
     private static final String CB_COMMENTS_CLOSE = "cmt:close";
+    private static final String CB_FILTERS_OPEN = "flt:open";
+    private static final String CB_FILTER_TOGGLE = "flt:t:";
+    private static final String CB_FILTER_CLEAR = "flt:clear";
+    private static final String CB_FILTER_CLOSE = "flt:close";
 
     private static final String[] GRADES = {"92", "95", "98", "100"};
     private static final int MAX_ROWS = 8;
@@ -77,6 +83,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private final FuelAvailabilityService fuel;
     private final TbankService tbank;
     private final NearbyFormatter formatter;
+    private final FuelFilterService filters;
 
     /** Per-chat id of the "share your location" prompt, so we can delete it afterwards. */
     private final Map<Long, Integer> promptByChat = new ConcurrentHashMap<>();
@@ -88,13 +95,14 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     public GdeBenzBot(TelegramBotProperties properties, TelegramClient client,
                       RegistrationService registration, FuelAvailabilityService fuel,
-                      TbankService tbank, NearbyFormatter formatter) {
+                      TbankService tbank, NearbyFormatter formatter, FuelFilterService filters) {
         this.botToken = properties.token();
         this.client = client;
         this.registration = registration;
         this.fuel = fuel;
         this.tbank = tbank;
         this.formatter = formatter;
+        this.filters = filters;
     }
 
     @Override
@@ -136,6 +144,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
                 case "/register" -> onRegister(from, chatId);
                 case "/pending" -> onPending(from, chatId);
                 case "/nearby" -> onNearby(from, chatId);
+                case "/filters" -> onFilters(from, chatId);
                 default -> onUnknown(from, chatId);
             }
         } catch (Exception e) {
@@ -166,6 +175,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         StringBuilder sb = new StringBuilder("Команды:\n");
         if (registration.isApproved(from.getId())) {
             sb.append("/nearby — показать АЗС рядом\n");
+            sb.append("/filters — фильтр по топливу\n");
         } else {
             sb.append("/register — запросить доступ\n");
         }
@@ -286,11 +296,12 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             sendText(chatId, "Источник данных сейчас недоступен. Попробуй через минуту.");
             return;
         }
-        renderGrid(chatId, lat, lon, result);
+        Set<String> filter = filters.get(from.getId());
+        renderGrid(chatId, lat, lon, FuelAvailabilityService.filterByFuels(result, filter), filter);
     }
 
     /** Sends the grid as a single message, replacing the previous one. */
-    private void renderGrid(long chatId, double lat, double lon, NearbyResult result) {
+    private void renderGrid(long chatId, double lat, double lon, NearbyResult result, Set<String> filter) {
         GridState old = gridByChat.remove(chatId);
         if (old != null && old.messageId() != null) {
             deleteMessage(chatId, old.messageId());
@@ -298,11 +309,30 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         TbankSnapshot snapshot = tbank.snapshot(lat, lon);
         Integer id = sendReturningId(SendMessage.builder()
                 .chatId(chatId)
-                .text(gridTitle(result))
+                .text(gridTitle(result, filter))
                 .parseMode("HTML")
                 .replyMarkup(gridKeyboard(lat, lon, result, snapshot))
                 .build());
         gridByChat.put(chatId, new GridState(lat, lon, result, snapshot, id));
+    }
+
+    /** Re-fetches nearby, applies the user's filter, and edits the existing grid message in place. */
+    private void editGrid(long chatId, int messageId, double lat, double lon, long userId) {
+        Set<String> filter = filters.get(userId);
+        NearbyResult result = FuelAvailabilityService.filterByFuels(fuel.nearby(lat, lon), filter);
+        TbankSnapshot snapshot = tbank.snapshot(lat, lon);
+        try {
+            client.execute(EditMessageText.builder()
+                    .chatId(String.valueOf(chatId))
+                    .messageId(messageId)
+                    .text(gridTitle(result, filter))
+                    .parseMode("HTML")
+                    .replyMarkup(gridKeyboard(lat, lon, result, snapshot))
+                    .build());
+            gridByChat.put(chatId, new GridState(lat, lon, result, snapshot, messageId));
+        } catch (TelegramApiException e) {
+            log.error("Failed to edit grid", e);
+        }
     }
 
     private void handleGridRefresh(CallbackQuery cb, String data) {
@@ -315,28 +345,12 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             answerCallback(cb.getId(), "Нужен доступ.");
             return;
         }
-        NearbyResult result;
         try {
-            result = fuel.nearby(point[0], point[1]);
+            editGrid(cb.getMessage().getChatId(), cb.getMessage().getMessageId(),
+                    point[0], point[1], cb.getFrom().getId());
+            answerCallback(cb.getId(), "Обновлено");
         } catch (GdeBenzApiClient.ApiException e) {
             answerCallback(cb.getId(), "Источник недоступен, попробуй позже.");
-            return;
-        }
-        TbankSnapshot snapshot = tbank.snapshot(point[0], point[1]);
-        answerCallback(cb.getId(), "Обновлено");
-        long chatId = cb.getMessage().getChatId();
-        Integer messageId = cb.getMessage().getMessageId();
-        try {
-            client.execute(EditMessageText.builder()
-                    .chatId(String.valueOf(chatId))
-                    .messageId(messageId)
-                    .text(gridTitle(result))
-                    .parseMode("HTML")
-                    .replyMarkup(gridKeyboard(point[0], point[1], result, snapshot))
-                    .build());
-            gridByChat.put(chatId, new GridState(point[0], point[1], result, snapshot, messageId));
-        } catch (TelegramApiException e) {
-            log.error("Failed to edit grid", e);
         }
     }
 
@@ -403,19 +417,126 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
                 .build());
     }
 
+    // ---- filters ----
+
+    private void onFilters(User from, long chatId) {
+        if (!registration.isApproved(from.getId())) {
+            sendText(chatId, "Нужен доступ. Отправь /register, затем дождись одобрения.");
+            return;
+        }
+        sendFilterMessage(chatId, filters.get(from.getId()));
+    }
+
+    private void handleFiltersOpen(CallbackQuery cb) {
+        answerCallback(cb.getId());
+        if (!registration.isApproved(cb.getFrom().getId())) {
+            sendText(cb.getMessage().getChatId(), "Нужен доступ. Отправь /register.");
+            return;
+        }
+        sendFilterMessage(cb.getMessage().getChatId(), filters.get(cb.getFrom().getId()));
+    }
+
+    private void handleFilterToggle(CallbackQuery cb, String data) {
+        if (!registration.isApproved(cb.getFrom().getId())) {
+            answerCallback(cb.getId(), "Нужен доступ.");
+            return;
+        }
+        Set<String> active = filters.toggle(cb.getFrom().getId(), data.substring(CB_FILTER_TOGGLE.length()));
+        answerCallback(cb.getId());
+        editFilterMessage(cb, active);
+    }
+
+    private void handleFilterClear(CallbackQuery cb) {
+        if (!registration.isApproved(cb.getFrom().getId())) {
+            answerCallback(cb.getId(), "Нужен доступ.");
+            return;
+        }
+        filters.clear(cb.getFrom().getId());
+        answerCallback(cb.getId(), "Сброшено");
+        editFilterMessage(cb, filters.get(cb.getFrom().getId()));
+    }
+
+    private void handleFilterClose(CallbackQuery cb) {
+        long chatId = cb.getMessage().getChatId();
+        answerCallback(cb.getId());
+        deleteMessage(chatId, cb.getMessage().getMessageId());
+        GridState state = gridByChat.get(chatId);
+        if (state != null && state.messageId() != null) {
+            try {
+                editGrid(chatId, state.messageId(), state.lat(), state.lon(), cb.getFrom().getId());
+            } catch (GdeBenzApiClient.ApiException e) {
+                log.warn("Failed to refresh grid after filter change", e);
+            }
+        }
+    }
+
+    private void sendFilterMessage(long chatId, Set<String> active) {
+        send(SendMessage.builder()
+                .chatId(chatId)
+                .text(filterText(active))
+                .parseMode("HTML")
+                .replyMarkup(filterKeyboard(active))
+                .build());
+    }
+
+    private void editFilterMessage(CallbackQuery cb, Set<String> active) {
+        try {
+            client.execute(EditMessageText.builder()
+                    .chatId(String.valueOf(cb.getMessage().getChatId()))
+                    .messageId(cb.getMessage().getMessageId())
+                    .text(filterText(active))
+                    .parseMode("HTML")
+                    .replyMarkup(filterKeyboard(active))
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to edit filter message", e);
+        }
+    }
+
+    private String filterText(Set<String> active) {
+        if (active.isEmpty()) {
+            return "⚙ <b>Фильтр по топливу</b>\n"
+                    + "Выбери нужные виды — список будет показывать только такие АЗС.\n"
+                    + "Сейчас: без фильтра (показываю все).";
+        }
+        return "⚙ <b>Фильтр по топливу</b>\n"
+                + "Показываю АЗС, где есть хотя бы один из выбранных.\n"
+                + "Сейчас: " + String.join(", ", active);
+    }
+
+    private InlineKeyboardMarkup filterKeyboard(Set<String> active) {
+        InlineKeyboardRow grades = new InlineKeyboardRow();
+        for (String grade : FuelFilterService.GRADES) {
+            grades.add(btn(active.contains(grade) ? "✅ " + grade : grade, CB_FILTER_TOGGLE + grade));
+        }
+        InlineKeyboardRow controls = new InlineKeyboardRow();
+        controls.add(btn("♻️ Сбросить", CB_FILTER_CLEAR));
+        controls.add(btn("✖ Закрыть", CB_FILTER_CLOSE));
+        return InlineKeyboardMarkup.builder().keyboardRow(grades).keyboardRow(controls).build();
+    }
+
     // ---- grid building ----
 
-    private String gridTitle(NearbyResult result) {
+    private String gridTitle(NearbyResult result, Set<String> filter) {
+        boolean filtered = filter != null && !filter.isEmpty();
         if (result.stations().isEmpty()) {
+            if (filtered) {
+                return "По фильтру (" + String.join(", ", filter)
+                        + ") рядом ничего не нашлось. Поменяй его в ⚙ Фильтры.";
+            }
             return "Рядом ничего не нашлось. Попробуй ещё раз позже.";
         }
-        return "⛽ <b>АЗС рядом</b> — нажми на название или марку для деталей";
+        String title = "⛽ <b>АЗС рядом</b> — нажми на название или марку для деталей";
+        if (filtered) {
+            title += "\n🔎 фильтр: " + String.join(", ", filter);
+        }
+        return title;
     }
 
     private InlineKeyboardMarkup gridKeyboard(double lat, double lon, NearbyResult result, TbankSnapshot snapshot) {
         var builder = InlineKeyboardMarkup.builder();
         if (result.stations().isEmpty()) {
-            builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
+            builder.keyboardRow(actionsRow(lat, lon));
             return builder.build();
         }
 
@@ -442,8 +563,15 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             builder.keyboardRow(row);
         }
 
-        builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
+        builder.keyboardRow(actionsRow(lat, lon));
         return builder.build();
+    }
+
+    private InlineKeyboardRow actionsRow(double lat, double lon) {
+        InlineKeyboardRow row = new InlineKeyboardRow();
+        row.add(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon)));
+        row.add(btn("⚙ Фильтры", CB_FILTERS_OPEN));
+        return row;
     }
 
     private String nameCell(StationView s) {
@@ -524,6 +652,14 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         } else if (data.equals(CB_COMMENTS_CLOSE)) {
             answerCallback(cb.getId());
             deleteMessage(cb.getMessage().getChatId(), cb.getMessage().getMessageId());
+        } else if (data.equals(CB_FILTERS_OPEN)) {
+            handleFiltersOpen(cb);
+        } else if (data.startsWith(CB_FILTER_TOGGLE)) {
+            handleFilterToggle(cb, data);
+        } else if (data.equals(CB_FILTER_CLEAR)) {
+            handleFilterClear(cb);
+        } else if (data.equals(CB_FILTER_CLOSE)) {
+            handleFilterClose(cb);
         } else {
             answerCallback(cb.getId(), "Неизвестное действие.");
         }
@@ -600,12 +736,14 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private void setApprovedMenu(long chatId) {
         setMenu(chatId, List.of(
                 BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
+                BotCommand.builder().command("filters").description("Фильтр по топливу").build(),
                 BotCommand.builder().command("help").description("Помощь").build()));
     }
 
     private void setAdminMenu(long chatId) {
         setMenu(chatId, List.of(
                 BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
+                BotCommand.builder().command("filters").description("Фильтр по топливу").build(),
                 BotCommand.builder().command("pending").description("Заявки на доступ").build(),
                 BotCommand.builder().command("help").description("Помощь").build()));
     }

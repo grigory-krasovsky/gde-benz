@@ -148,6 +148,38 @@ class FuelMappingTest {
     }
 
     @Test
+    void filterByFuelsKeepsStationsWithAnySelectedGrade() {
+        NearbyResult result = new NearbyResult(List.of(
+                named("A", "92,ДТ"), named("B", "95,98"), named("C", "92")), "t");
+        NearbyResult filtered = FuelAvailabilityService.filterByFuels(result, java.util.Set.of("95", "98"));
+        assertThat(filtered.stations()).extracting(StationView::brand).containsExactly("B");
+    }
+
+    @Test
+    void filterByFuelsCounts95Plus() {
+        NearbyResult result = new NearbyResult(List.of(named("A", "95+,ДТ")), "t");
+        assertThat(FuelAvailabilityService.filterByFuels(result, java.util.Set.of("95")).stations()).hasSize(1);
+    }
+
+    @Test
+    void filterByFuelsMatchesDieselExactly() {
+        NearbyResult result = new NearbyResult(List.of(named("A", "92"), named("B", "ДТ")), "t");
+        assertThat(FuelAvailabilityService.filterByFuels(result, java.util.Set.of("ДТ")).stations())
+                .extracting(StationView::brand).containsExactly("B");
+    }
+
+    @Test
+    void filterByFuelsEmptyFilterReturnsSameResult() {
+        NearbyResult result = new NearbyResult(List.of(named("A", "92")), "t");
+        assertThat(FuelAvailabilityService.filterByFuels(result, java.util.Set.of())).isSameAs(result);
+    }
+
+    private static StationView named(String brand, String fuelsNow) {
+        return new StationView("1", brand, "", 55.7, 37.6, 1.0,
+                FuelStatus.AVAILABLE, "", fuelsNow, 1, null, 0.9);
+    }
+
+    @Test
     void hasFuelColumnMerges95Plus() {
         assertThat(NearbyFormatter.hasFuelColumn("95+", "95")).isTrue();   // 95+ counts as 95
         assertThat(NearbyFormatter.hasFuelColumn("95", "95")).isTrue();

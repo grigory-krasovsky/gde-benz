@@ -16,6 +16,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -71,6 +72,33 @@ public class FuelAvailabilityService {
                 .limit(maxResults)
                 .toList();
         return new NearbyResult(stations, response.updated());
+    }
+
+    /**
+     * Keeps only stations that currently have at least one of the requested grades (OR semantics;
+     * the "95" grade also counts "95+", "ДТ" is matched as an exact token). An empty/null grade set
+     * means "no filter" and the result is returned unchanged.
+     */
+    public static NearbyResult filterByFuels(NearbyResult result, Set<String> grades) {
+        if (grades == null || grades.isEmpty()) {
+            return result;
+        }
+        List<StationView> kept = result.stations().stream()
+                .filter(s -> hasAnyGrade(s.fuelsNow(), grades))
+                .toList();
+        return new NearbyResult(kept, result.updated());
+    }
+
+    private static boolean hasAnyGrade(String fuelsNow, Set<String> grades) {
+        for (String grade : grades) {
+            boolean present = "ДТ".equals(grade)
+                    ? NearbyFormatter.hasFuel(fuelsNow, "ДТ")
+                    : NearbyFormatter.hasFuelColumn(fuelsNow, grade);
+            if (present) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static List<CommentView> mapComments(List<CommentDto> comments) {

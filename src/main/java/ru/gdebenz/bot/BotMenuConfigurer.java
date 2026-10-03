@@ -33,6 +33,7 @@ public class BotMenuConfigurer implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         List<BotCommand> commands = List.of(
                 BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
+                BotCommand.builder().command("filters").description("Фильтр по топливу").build(),
                 BotCommand.builder().command("register").description("Запросить доступ").build(),
                 BotCommand.builder().command("help").description("Помощь").build(),
                 BotCommand.builder().command("start").description("Начать").build()
