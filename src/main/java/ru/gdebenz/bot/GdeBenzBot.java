@@ -68,7 +68,6 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_GRID_CMT = "g:c:";
     private static final String CB_GRID_NOOP = "g:noop";
     private static final String CB_COMMENTS_CLOSE = "cmt:close";
-    private static final String CB_FILTERS_OPEN = "flt:open";
     private static final String CB_FILTER_TOGGLE = "flt:t:";
     private static final String CB_FILTER_CLEAR = "flt:clear";
     private static final String CB_FILTER_CLOSE = "flt:close";
@@ -427,15 +426,6 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         sendFilterMessage(chatId, filters.get(from.getId()));
     }
 
-    private void handleFiltersOpen(CallbackQuery cb) {
-        answerCallback(cb.getId());
-        if (!registration.isApproved(cb.getFrom().getId())) {
-            sendText(cb.getMessage().getChatId(), "Нужен доступ. Отправь /register.");
-            return;
-        }
-        sendFilterMessage(cb.getMessage().getChatId(), filters.get(cb.getFrom().getId()));
-    }
-
     private void handleFilterToggle(CallbackQuery cb, String data) {
         if (!registration.isApproved(cb.getFrom().getId())) {
             answerCallback(cb.getId(), "Нужен доступ.");
@@ -536,7 +526,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private InlineKeyboardMarkup gridKeyboard(double lat, double lon, NearbyResult result, TbankSnapshot snapshot) {
         var builder = InlineKeyboardMarkup.builder();
         if (result.stations().isEmpty()) {
-            builder.keyboardRow(actionsRow(lat, lon));
+            builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
             return builder.build();
         }
 
@@ -563,15 +553,8 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             builder.keyboardRow(row);
         }
 
-        builder.keyboardRow(actionsRow(lat, lon));
+        builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
         return builder.build();
-    }
-
-    private InlineKeyboardRow actionsRow(double lat, double lon) {
-        InlineKeyboardRow row = new InlineKeyboardRow();
-        row.add(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon)));
-        row.add(btn("⚙ Фильтры", CB_FILTERS_OPEN));
-        return row;
     }
 
     private String nameCell(StationView s) {
@@ -652,8 +635,6 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         } else if (data.equals(CB_COMMENTS_CLOSE)) {
             answerCallback(cb.getId());
             deleteMessage(cb.getMessage().getChatId(), cb.getMessage().getMessageId());
-        } else if (data.equals(CB_FILTERS_OPEN)) {
-            handleFiltersOpen(cb);
         } else if (data.startsWith(CB_FILTER_TOGGLE)) {
             handleFilterToggle(cb, data);
         } else if (data.equals(CB_FILTER_CLEAR)) {
