@@ -34,6 +34,7 @@ import ru.gdebenz.fuel.tbank.TbankService;
 import ru.gdebenz.fuel.tbank.TbankSnapshot;
 import ru.gdebenz.fuel.tbank.TbankStation;
 import ru.gdebenz.user.BotUser;
+import ru.gdebenz.user.FavoriteService;
 import ru.gdebenz.user.FuelFilterService;
 import ru.gdebenz.user.RegistrationService;
 import ru.gdebenz.user.TgUser;
@@ -41,6 +42,7 @@ import ru.gdebenz.user.TgUser;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -67,6 +69,9 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_GRID_FUEL = "g:f:";
     private static final String CB_GRID_CMT = "g:c:";
     private static final String CB_GRID_NOOP = "g:noop";
+    private static final String CB_GRID_STAR = "g:s:";
+    private static final String CB_GRID_STAR_MODE = "g:smode";
+    private static final String CB_GRID_STAR_DONE = "g:sdone";
     private static final String CB_COMMENTS_CLOSE = "cmt:close";
     private static final String CB_FILTER_TOGGLE = "flt:t:";
     private static final String CB_FILTER_CLEAR = "flt:clear";
@@ -83,18 +88,29 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private final TbankService tbank;
     private final NearbyFormatter formatter;
     private final FuelFilterService filters;
+    private final FavoriteService favorites;
 
     /** Per-chat id of the "share your location" prompt, so we can delete it afterwards. */
     private final Map<Long, Integer> promptByChat = new ConcurrentHashMap<>();
     /** Per-chat current grid state so callbacks can resolve a station by its row index. */
     private final Map<Long, GridState> gridByChat = new ConcurrentHashMap<>();
 
-    private record GridState(double lat, double lon, NearbyResult result, TbankSnapshot tbank, Integer messageId) {
+    /**
+     * What the grid message currently shows. {@code starMode} = the "⭐ Отметить" mode, where the
+     * 💬 column is replaced by ☆/★ toggles.
+     */
+    private record GridState(double lat, double lon, NearbyResult result, TbankSnapshot tbank, Integer messageId,
+                             Set<String> filter, boolean starMode) {
+
+        GridState withStarMode(boolean on) {
+            return new GridState(lat, lon, result, tbank, messageId, filter, on);
+        }
     }
 
     public GdeBenzBot(TelegramBotProperties properties, TelegramClient client,
                       RegistrationService registration, FuelAvailabilityService fuel,
-                      TbankService tbank, NearbyFormatter formatter, FuelFilterService filters) {
+                      TbankService tbank, NearbyFormatter formatter, FuelFilterService filters,
+                      FavoriteService favorites) {
         this.botToken = properties.token();
         this.client = client;
         this.registration = registration;
@@ -102,6 +118,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         this.tbank = tbank;
         this.formatter = formatter;
         this.filters = filters;
+        this.favorites = favorites;
     }
 
     @Override
@@ -175,6 +192,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         if (registration.isApproved(from.getId())) {
             sb.append("/nearby — показать АЗС рядом\n");
             sb.append("/filters — фильтр по топливу\n");
+            sb.append("⭐ Отметить (под списком АЗС) — избранные АЗС\n");
         } else {
             sb.append("/register — запросить доступ\n");
         }
@@ -296,42 +314,135 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             return;
         }
         Set<String> filter = filters.get(from.getId());
-        renderGrid(chatId, lat, lon, FuelAvailabilityService.filterByFuels(result, filter), filter);
+        renderGrid(from.getId(), chatId, lat, lon, FuelAvailabilityService.filterByFuels(result, filter), filter);
     }
 
     /** Sends the grid as a single message, replacing the previous one. */
-    private void renderGrid(long chatId, double lat, double lon, NearbyResult result, Set<String> filter) {
+    private void renderGrid(long userId, long chatId, double lat, double lon, NearbyResult result, Set<String> filter) {
         GridState old = gridByChat.remove(chatId);
         if (old != null && old.messageId() != null) {
             deleteMessage(chatId, old.messageId());
         }
-        TbankSnapshot snapshot = tbank.snapshot(lat, lon);
+        GridState state = new GridState(lat, lon, result, tbank.snapshot(lat, lon), null, filter, false);
+        Set<String> favIds = favorites.ids(userId);
         Integer id = sendReturningId(SendMessage.builder()
                 .chatId(chatId)
-                .text(gridTitle(result, filter))
+                .text(gridTitle(state, favIds))
                 .parseMode("HTML")
-                .replyMarkup(gridKeyboard(lat, lon, result, snapshot))
+                .replyMarkup(gridKeyboard(state, favIds))
                 .build());
-        gridByChat.put(chatId, new GridState(lat, lon, result, snapshot, id));
+        gridByChat.put(chatId, new GridState(lat, lon, result, state.tbank(), id, filter, false));
     }
 
     /** Re-fetches nearby, applies the user's filter, and edits the existing grid message in place. */
     private void editGrid(long chatId, int messageId, double lat, double lon, long userId) {
         Set<String> filter = filters.get(userId);
         NearbyResult result = FuelAvailabilityService.filterByFuels(fuel.nearby(lat, lon), filter);
-        TbankSnapshot snapshot = tbank.snapshot(lat, lon);
+        showGrid(chatId, new GridState(lat, lon, result, tbank.snapshot(lat, lon), messageId, filter, false), userId);
+    }
+
+    /** Edits the grid message to show {@code state} (no API calls) and remembers it as current. */
+    private void showGrid(long chatId, GridState state, long userId) {
+        Set<String> favIds = favorites.ids(userId);
         try {
             client.execute(EditMessageText.builder()
                     .chatId(String.valueOf(chatId))
-                    .messageId(messageId)
-                    .text(gridTitle(result, filter))
+                    .messageId(state.messageId())
+                    .text(gridTitle(state, favIds))
                     .parseMode("HTML")
-                    .replyMarkup(gridKeyboard(lat, lon, result, snapshot))
+                    .replyMarkup(gridKeyboard(state, favIds))
                     .build());
-            gridByChat.put(chatId, new GridState(lat, lon, result, snapshot, messageId));
+            gridByChat.put(chatId, state);
         } catch (TelegramApiException e) {
             log.error("Failed to edit grid", e);
         }
+    }
+
+    /** The grid state, but only if the callback came from the grid message it describes. */
+    private GridState currentGrid(CallbackQuery cb) {
+        GridState state = gridByChat.get(cb.getMessage().getChatId());
+        return state != null && Objects.equals(state.messageId(), cb.getMessage().getMessageId()) ? state : null;
+    }
+
+    // ---- favorites (star mode) ----
+
+    private void handleStarModeOn(CallbackQuery cb) {
+        if (!registration.isApproved(cb.getFrom().getId())) {
+            answerCallback(cb.getId(), "Нужен доступ.");
+            return;
+        }
+        GridState state = currentGrid(cb);
+        if (state == null) {
+            answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
+            return;
+        }
+        answerCallback(cb.getId());
+        if (!state.starMode()) { // a double tap would be an unchanged edit, which Telegram rejects
+            showGrid(cb.getMessage().getChatId(), state.withStarMode(true), cb.getFrom().getId());
+        }
+    }
+
+    private void handleStarModeDone(CallbackQuery cb, String data) {
+        if (!registration.isApproved(cb.getFrom().getId())) {
+            answerCallback(cb.getId(), "Нужен доступ.");
+            return;
+        }
+        long chatId = cb.getMessage().getChatId();
+        GridState state = currentGrid(cb);
+        if (state != null) {
+            answerCallback(cb.getId());
+            if (state.starMode()) {
+                showGrid(chatId, state.withStarMode(false), cb.getFrom().getId());
+            }
+            return;
+        }
+        // State lost (e.g. bot restarted): there is no Refresh button in star mode, so refresh from the
+        // coordinates carried in the callback instead of leaving the user stuck.
+        double[] point = parsePoint(data.substring(CB_GRID_STAR_DONE.length()));
+        if (point == null) {
+            answerCallback(cb.getId(), "Список устарел. Запроси АЗС заново: /nearby");
+            return;
+        }
+        try {
+            editGrid(chatId, cb.getMessage().getMessageId(), point[0], point[1], cb.getFrom().getId());
+            answerCallback(cb.getId(), "Обновлено");
+        } catch (GdeBenzApiClient.ApiException e) {
+            answerCallback(cb.getId(), "Источник недоступен, попробуй позже.");
+        }
+    }
+
+    private void handleGridStar(CallbackQuery cb, String data) {
+        long userId = cb.getFrom().getId();
+        if (!registration.isApproved(userId)) {
+            answerCallback(cb.getId(), "Нужен доступ.");
+            return;
+        }
+        GridState state = currentGrid(cb);
+        int index = parseIndex(data.substring(CB_GRID_STAR.length()));
+        if (state == null || index < 0 || index >= Math.min(state.result().stations().size(), MAX_ROWS)) {
+            answerCallback(cb.getId(), "Список устарел. Нажми «Готово».");
+            return;
+        }
+        StationView s = state.result().stations().get(index);
+        switch (favorites.toggle(userId, s)) {
+            case ADDED -> answerCallback(cb.getId(), "⭐ " + stationLabel(s) + " — в избранном");
+            case REMOVED -> answerCallback(cb.getId(), "Убрано из избранного: " + stationLabel(s));
+            case LIMIT_REACHED -> {
+                answerCallback(cb.getId(), "Максимум " + FavoriteService.MAX_FAVORITES
+                        + " избранных — сначала убери лишнюю ★");
+                return;
+            }
+        }
+        showGrid(cb.getMessage().getChatId(), state, userId);
+    }
+
+    /** "Brand, address" for toasts, kept short (a toast is capped at 200 chars). */
+    private static String stationLabel(StationView s) {
+        String label = s.brand() == null ? "" : s.brand();
+        if (s.addr() != null && !s.addr().isBlank()) {
+            label = label.isEmpty() ? s.addr() : label + ", " + s.addr();
+        }
+        return label.length() > 80 ? label.substring(0, 79) + "…" : label;
     }
 
     private void handleGridRefresh(CallbackQuery cb, String data) {
@@ -359,7 +470,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             answerCallback(cb.getId(), "Список устарел. Нажми «Обновить».");
             return;
         }
-        answerAlert(cb.getId(), infoText(s));
+        answerAlert(cb.getId(), infoText(s, favorites.ids(cb.getFrom().getId()).contains(s.osmId())));
     }
 
     private void handleGridFuel(CallbackQuery cb, String data) {
@@ -507,7 +618,9 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
 
     // ---- grid building ----
 
-    private String gridTitle(NearbyResult result, Set<String> filter) {
+    private String gridTitle(GridState state, Set<String> favIds) {
+        NearbyResult result = state.result();
+        Set<String> filter = state.filter();
         boolean filtered = filter != null && !filter.isEmpty();
         if (result.stations().isEmpty()) {
             if (filtered) {
@@ -516,14 +629,21 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             }
             return "Рядом ничего не нашлось. Попробуй ещё раз позже.";
         }
-        String title = "⛽ <b>АЗС рядом</b> — нажми на название или марку для деталей";
+        String title = state.starMode()
+                ? "⭐ <b>Отметь свои АЗС</b> · " + favIds.size() + "/" + FavoriteService.MAX_FAVORITES
+                        + "\nНажми ☆ — добавить в избранное, ★ — убрать"
+                : "⛽ <b>АЗС рядом</b> — нажми на название или марку для деталей";
         if (filtered) {
             title += "\n🔎 фильтр: " + String.join(", ", filter);
         }
         return title;
     }
 
-    private InlineKeyboardMarkup gridKeyboard(double lat, double lon, NearbyResult result, TbankSnapshot snapshot) {
+    private InlineKeyboardMarkup gridKeyboard(GridState state, Set<String> favIds) {
+        double lat = state.lat();
+        double lon = state.lon();
+        NearbyResult result = state.result();
+        boolean starMode = state.starMode();
         var builder = InlineKeyboardMarkup.builder();
         if (result.stations().isEmpty()) {
             builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
@@ -536,37 +656,47 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             header.add(btn(grade, CB_GRID_NOOP));
         }
         header.add(btn("🗺", CB_GRID_NOOP));
-        header.add(btn("💬", CB_GRID_NOOP));
+        header.add(btn(starMode ? "⭐" : "💬", CB_GRID_NOOP));
         builder.keyboardRow(header);
 
         int limit = Math.min(result.stations().size(), MAX_ROWS);
         for (int i = 0; i < limit; i++) {
             StationView s = result.stations().get(i);
-            Optional<TbankStation> tb = snapshot.match(s.lat(), s.lon(), s.brand());
+            boolean fav = favIds.contains(s.osmId());
+            Optional<TbankStation> tb = state.tbank().match(s.lat(), s.lon(), s.brand());
             InlineKeyboardRow row = new InlineKeyboardRow();
-            row.add(btn(nameCell(s), CB_GRID_INFO + i));
+            row.add(btn(nameCell(s, fav), CB_GRID_INFO + i));
             for (int g = 0; g < GRADES.length; g++) {
                 row.add(btn(NearbyFormatter.fuelCell(s, GRADES[g], tb), CB_GRID_FUEL + i + ":" + g));
             }
             row.add(urlBtn("🗺", NearbyFormatter.routeUrl(lat, lon, s.lat(), s.lon())));
-            row.add(btn("💬", CB_GRID_CMT + i));
+            row.add(starMode ? btn(fav ? "★" : "☆", CB_GRID_STAR + i) : btn("💬", CB_GRID_CMT + i));
             builder.keyboardRow(row);
         }
 
-        builder.keyboardRow(rowOf(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon))));
+        if (starMode) {
+            builder.keyboardRow(rowOf(btn("✓ Готово", CB_GRID_STAR_DONE + point(lat, lon))));
+        } else {
+            InlineKeyboardRow controls = new InlineKeyboardRow();
+            controls.add(btn("🔄 Обновить", CB_GRID_REFRESH + point(lat, lon)));
+            controls.add(btn("⭐ Отметить", CB_GRID_STAR_MODE));
+            builder.keyboardRow(controls);
+        }
         return builder.build();
     }
 
-    private String nameCell(StationView s) {
+    /** Brand, shortened to fit the cell; favorites get a ★ prefix (which eats one char of the budget). */
+    private String nameCell(StationView s, boolean favorite) {
         String name = s.brand() == null ? "" : s.brand();
-        if (name.length() > NAME_MAX) {
-            name = name.substring(0, NAME_MAX - 1) + "…";
+        int max = favorite ? NAME_MAX - 1 : NAME_MAX;
+        if (name.length() > max) {
+            name = name.substring(0, max - 1) + "…";
         }
-        return name;
+        return favorite ? "★" + name : name;
     }
 
-    private String infoText(StationView s) {
-        StringBuilder sb = new StringBuilder(s.brand() == null ? "" : s.brand());
+    private String infoText(StationView s, boolean favorite) {
+        StringBuilder sb = new StringBuilder(favorite ? "★ " : "").append(s.brand() == null ? "" : s.brand());
         if (!s.addr().isBlank()) {
             sb.append('\n').append(s.addr());
         }
@@ -624,6 +754,12 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             onNearbyCallback(cb);
         } else if (data.equals(CB_GRID_NOOP)) {
             answerCallback(cb.getId());
+        } else if (data.equals(CB_GRID_STAR_MODE)) {
+            handleStarModeOn(cb);
+        } else if (data.startsWith(CB_GRID_STAR_DONE)) {
+            handleStarModeDone(cb, data);
+        } else if (data.startsWith(CB_GRID_STAR)) {
+            handleGridStar(cb, data);
         } else if (data.startsWith(CB_GRID_REFRESH)) {
             handleGridRefresh(cb, data);
         } else if (data.startsWith(CB_GRID_INFO)) {
