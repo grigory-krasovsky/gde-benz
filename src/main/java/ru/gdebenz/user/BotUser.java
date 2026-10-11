@@ -50,6 +50,18 @@ public class BotUser {
     @Column(name = "fuel_filter", length = 64)
     private String fuelFilter;
 
+    @Column(name = "notify_enabled", nullable = false)
+    private boolean notifyEnabled = true;
+
+    @Column(name = "quiet_enabled", nullable = false)
+    private boolean quietEnabled = true;
+
+    @Column(name = "quiet_from", nullable = false)
+    private int quietFrom = 23;
+
+    @Column(name = "quiet_to", nullable = false)
+    private int quietTo = 7;
+
     protected BotUser() {
         // for JPA
     }
@@ -83,6 +95,15 @@ public class BotUser {
 
     public void setFuelFilter(String fuelFilter, Instant now) {
         this.fuelFilter = fuelFilter;
+        this.updatedAt = now;
+    }
+
+    public void setNotifications(boolean notifyEnabled, boolean quietEnabled, int quietFrom, int quietTo,
+                                 Instant now) {
+        this.notifyEnabled = notifyEnabled;
+        this.quietEnabled = quietEnabled;
+        this.quietFrom = quietFrom;
+        this.quietTo = quietTo;
         this.updatedAt = now;
     }
 
@@ -124,5 +145,21 @@ public class BotUser {
 
     public String getFuelFilter() {
         return fuelFilter;
+    }
+
+    public boolean isNotifyEnabled() {
+        return notifyEnabled;
+    }
+
+    public boolean isQuietEnabled() {
+        return quietEnabled;
+    }
+
+    public int getQuietFrom() {
+        return quietFrom;
+    }
+
+    public int getQuietTo() {
+        return quietTo;
     }
 }

@@ -10,7 +10,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
@@ -26,7 +26,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class FuelAvailabilityService {
 
-    private static final ZoneId MSK = ZoneId.of("Europe/Moscow");
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final GdeBenzApiClient client;
@@ -101,7 +100,7 @@ public class FuelAvailabilityService {
         return false;
     }
 
-    static List<CommentView> mapComments(List<CommentDto> comments) {
+    public static List<CommentView> mapComments(List<CommentDto> comments) {
         return comments.stream()
                 .map(c -> new CommentView(
                         FuelStatus.from(c.status()),
@@ -136,12 +135,13 @@ public class FuelAvailabilityService {
                 dto.confidenceBase());
     }
 
-    static Instant parseTimestamp(String raw) {
+    /** gdebenz timestamps ("yyyy-MM-dd HH:mm:ss") are UTC; they are shown to users as MSK (UTC+3). */
+    public static Instant parseTimestamp(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
         try {
-            return LocalDateTime.parse(raw.trim(), TS).atZone(MSK).toInstant();
+            return LocalDateTime.parse(raw.trim(), TS).toInstant(ZoneOffset.UTC);
         } catch (RuntimeException e) {
             return null;
         }

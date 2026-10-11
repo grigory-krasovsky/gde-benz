@@ -38,6 +38,11 @@ gdebenz:
     enabled: ${GDEBENZ_TBANK_ENABLED:true}
     radius-km: ${GDEBENZ_TBANK_RADIUS_KM:10}
     match-radius-meters: ${GDEBENZ_TBANK_MATCH_M:120}
+  watch:
+    # Background polling of favorite stations (/api/comments/{osm_id}), alerts on status/grade change.
+    enabled: ${GDEBENZ_WATCH_ENABLED:true}
+    interval: ${GDEBENZ_WATCH_INTERVAL:60s}
+    request-pause: ${GDEBENZ_WATCH_REQUEST_PAUSE:500ms}
 
 logging:
   level:

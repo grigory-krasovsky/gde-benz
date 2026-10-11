@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import ru.gdebenz.fuel.api.CommentDto;
+import ru.gdebenz.fuel.api.StationSummaryDto;
 import ru.gdebenz.fuel.tbank.TbankStation;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -98,10 +99,10 @@ class FuelMappingTest {
     }
 
     @Test
-    void parsesTimestampAsMoscowTime() {
+    void parsesTimestampAsUtc() {
         Instant parsed = FuelAvailabilityService.parseTimestamp("2026-10-01 07:08:08");
-        // 07:08:08 MSK (+03:00) == 04:08:08 UTC
-        assertThat(parsed).isEqualTo(Instant.parse("2026-10-01T04:08:08Z"));
+        // gdebenz sends UTC: 07:08:08 == 10:08:08 MSK
+        assertThat(parsed).isEqualTo(Instant.parse("2026-10-01T07:08:08Z"));
         assertThat(FuelAvailabilityService.parseTimestamp("")).isNull();
         assertThat(FuelAvailabilityService.parseTimestamp(null)).isNull();
     }
@@ -206,8 +207,8 @@ class FuelMappingTest {
     @Test
     void formatterRendersStatusEmojiRouteAndFreshness() throws Exception {
         NearbyResult result = FuelAvailabilityService.map(parse(), 10);
-        // Fixed "now" = 2026-10-01 08:00:00 MSK (05:00:00 UTC)
-        Clock clock = Clock.fixed(Instant.parse("2026-10-01T05:00:00Z"), ZoneOffset.UTC);
+        // Fixed "now" = 2026-10-01 08:00:00 UTC (11:00 MSK)
+        Clock clock = Clock.fixed(Instant.parse("2026-10-01T08:00:00Z"), ZoneOffset.UTC);
         NearbyFormatter formatter = new NearbyFormatter(clock);
 
         String out = formatter.format(result, 55.70, 37.60);
@@ -268,16 +269,16 @@ class FuelMappingTest {
     @Test
     void filtersCommentsOlderThanMaxAge() throws Exception {
         List<CommentView> views = FuelAvailabilityService.mapComments(parseComments());
-        Instant now = Instant.parse("2026-10-01T05:00:00Z"); // 08:00 MSK
+        Instant now = Instant.parse("2026-10-01T08:00:00Z");
         var recent = FuelAvailabilityService.filterRecent(views, now, java.time.Duration.ofHours(4));
-        // Only the two reports within the last 4h (07:12 and 05:21 MSK) survive.
+        // Only the two reports within the last 4h (07:12 and 05:21 UTC) survive.
         assertThat(recent).hasSize(2);
     }
 
     @Test
     void formatsCommentsWithMarkers() throws Exception {
         List<CommentView> views = FuelAvailabilityService.mapComments(parseComments());
-        Clock clock = Clock.fixed(Instant.parse("2026-10-01T05:00:00Z"), ZoneOffset.UTC);
+        Clock clock = Clock.fixed(Instant.parse("2026-10-01T08:00:00Z"), ZoneOffset.UTC);
 
         String out = new NearbyFormatter(clock).formatComments(views);
 
@@ -286,5 +287,19 @@ class FuelMappingTest {
         assertThat(out).contains("✓");          // reliable marker
         assertThat(out).contains("Перерыв");
         assertThat(out).contains("🔴");          // the "no" report
+    }
+
+    @Test
+    void parsesCamelCaseStationSummary() throws Exception {
+        String json = """
+                {"status":"yes","confirmations":2,"updated":"2026-10-11 11:03:55","views":122626,
+                 "fuelsNow":"92,ДТ","confidenceBase":0.7104,"addr":"Загородное шоссе, 2Б",
+                 "brand":"Роснефть","lat":55.7012509,"lon":37.605104}
+                """;
+        StationSummaryDto dto = mapper().readValue(json, StationSummaryDto.class);
+        assertThat(dto.fuelsNow()).isEqualTo("92,ДТ");
+        assertThat(dto.confirmations()).isEqualTo(2);
+        assertThat(FuelAvailabilityService.parseTimestamp(dto.updated()))
+                .isEqualTo(Instant.parse("2026-10-11T11:03:55Z"));
     }
 }

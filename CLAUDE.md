@@ -33,17 +33,22 @@
 - **Приватность:** бот приватный — доступ по белому списку Telegram user-id; чужим API не дёргаем.
 - **Источник данных:** `gdebenz.ru/api/nearby` за DDoS-Guard → нужны браузерный `User-Agent`
   и `Referer: https://gdebenz.ru/`, общий cookie-jar (`__ddg*`), без `Accept-Encoding: gzip`.
-  Ходить вежливо: запрос по действию пользователя + короткий TTL-кэш, бэкофф на 5xx.
+  Короткий TTL-кэш, бэкофф на 5xx. Фоновый опрос избранных АЗС раз в минуту согласован с автором.
 
 ## Формат ответа `/api/nearby`
 
 `GET https://gdebenz.ru/api/nearby?lat=<D>&lon=<D>&radius_km=<D>&_=<ts>` →
-`{ "stations": [ ≤200 ], "updated": "yyyy-MM-dd HH:mm:ss" }` (время МСК).
+`{ "stations": [ ≤200 ], "updated": "yyyy-MM-dd HH:mm:ss" }` (время UTC; пользователю показываем МСК = UTC+3).
 
 Станция: `osm_id`, `brand`, `name`, `addr`, `lat`, `lon`, `distance_km`,
 `status` (`yes`/`no`, возможны др. → fallback UNKNOWN), `detail` (человекочит., вкл. очередь),
 `fuels_now` (что есть сейчас: `92,95,95+,98,100,ДТ`), `confirmations` (int),
-`last_at` (МСК), `confidence_base` (0..1), `meta.f[]` (марки на АЗС: `92,95,98,100,80,dt,lpg`).
+`last_at` (UTC), `confidence_base` (0..1), `meta.f[]` (марки на АЗС: `92,95,98,100,80,dt,lpg`).
+
+`GET /api/comments/<osm_id>` — сводка по одной станции (**camelCase**!): `status`, `updated`
+(время последней отметки, UTC), `fuelsNow` (часто пустой — марки берём из `/recent`), `confirmations`,
+`pricesNow`, `brand`, `addr`, `lat`, `lon`. Используется фоновым опросом избранных (`watch/FavoriteWatcher`).
+`GET /api/comments/<osm_id>/recent?limit=N` — отметки водителей (snake_case, новые первыми).
 
 Собирая URL — форсировать `Locale.ROOT` (иначе ru-локаль даст запятую в координатах).
 

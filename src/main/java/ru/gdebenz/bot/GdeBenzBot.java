@@ -36,8 +36,10 @@ import ru.gdebenz.fuel.tbank.TbankStation;
 import ru.gdebenz.user.BotUser;
 import ru.gdebenz.user.FavoriteService;
 import ru.gdebenz.user.FuelFilterService;
+import ru.gdebenz.user.NotificationSettingsService;
 import ru.gdebenz.user.RegistrationService;
 import ru.gdebenz.user.TgUser;
+import ru.gdebenz.watch.FavoriteWatcher;
 
 import java.util.List;
 import java.util.Locale;
@@ -76,6 +78,11 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_FILTER_TOGGLE = "flt:t:";
     private static final String CB_FILTER_CLEAR = "flt:clear";
     private static final String CB_FILTER_CLOSE = "flt:close";
+    private static final String CB_SET_NOTIFY = "set:n";
+    private static final String CB_SET_QUIET = "set:q";
+    private static final String CB_SET_FROM = "set:f:";
+    private static final String CB_SET_TO = "set:t:";
+    private static final String CB_SET_CLOSE = "set:close";
 
     private static final String[] GRADES = {"92", "95", "98", "100"};
     private static final int MAX_ROWS = 8;
@@ -89,6 +96,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private final NearbyFormatter formatter;
     private final FuelFilterService filters;
     private final FavoriteService favorites;
+    private final NotificationSettingsService notifications;
 
     /** Per-chat id of the "share your location" prompt, so we can delete it afterwards. */
     private final Map<Long, Integer> promptByChat = new ConcurrentHashMap<>();
@@ -110,7 +118,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     public GdeBenzBot(TelegramBotProperties properties, TelegramClient client,
                       RegistrationService registration, FuelAvailabilityService fuel,
                       TbankService tbank, NearbyFormatter formatter, FuelFilterService filters,
-                      FavoriteService favorites) {
+                      FavoriteService favorites, NotificationSettingsService notifications) {
         this.botToken = properties.token();
         this.client = client;
         this.registration = registration;
@@ -119,6 +127,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         this.formatter = formatter;
         this.filters = filters;
         this.favorites = favorites;
+        this.notifications = notifications;
     }
 
     @Override
@@ -161,6 +170,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
                 case "/pending" -> onPending(from, chatId);
                 case "/nearby" -> onNearby(from, chatId);
                 case "/filters" -> onFilters(from, chatId);
+                case "/settings" -> onSettings(from, chatId);
                 default -> onUnknown(from, chatId);
             }
         } catch (Exception e) {
@@ -193,6 +203,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             sb.append("/nearby — показать АЗС рядом\n");
             sb.append("/filters — фильтр по топливу\n");
             sb.append("⭐ Отметить (под списком АЗС) — избранные АЗС\n");
+            sb.append("/settings — оповещения по избранным и тихие часы\n");
         } else {
             sb.append("/register — запросить доступ\n");
         }
@@ -503,18 +514,26 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     }
 
     private void openComments(CallbackQuery cb, StationView s, TbankSnapshot snapshot) {
+        sendComments(cb, s.osmId(), snapshot.match(s.lat(), s.lon(), s.brand()));
+    }
+
+    /** "💬 Отметки" under a favorite alert: the station's recent reports (no T-Bank lookup). */
+    private void handleWatchComments(CallbackQuery cb, String data) {
+        sendComments(cb, data.substring(FavoriteWatcher.CB_COMMENTS.length()), Optional.empty());
+    }
+
+    private void sendComments(CallbackQuery cb, String osmId, Optional<TbankStation> match) {
         if (!registration.isApproved(cb.getFrom().getId())) {
             answerCallback(cb.getId(), "Нужен доступ.");
             return;
         }
         String text;
         try {
-            text = formatter.formatComments(fuel.comments(s.osmId()));
+            text = formatter.formatComments(fuel.comments(osmId));
         } catch (GdeBenzApiClient.ApiException e) {
             answerCallback(cb.getId(), "Не удалось загрузить отметки.");
             return;
         }
-        Optional<TbankStation> match = snapshot.match(s.lat(), s.lon(), s.brand());
         if (match.isPresent()) {
             text = text + "\n\n" + formatter.formatTbankPopup(match);
         }
@@ -614,6 +633,99 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         controls.add(btn("♻️ Сбросить", CB_FILTER_CLEAR));
         controls.add(btn("✖ Закрыть", CB_FILTER_CLOSE));
         return InlineKeyboardMarkup.builder().keyboardRow(grades).keyboardRow(controls).build();
+    }
+
+    // ---- settings (favorite alerts + quiet hours) ----
+
+    private void onSettings(User from, long chatId) {
+        if (!registration.isApproved(from.getId())) {
+            sendText(chatId, "Нужен доступ. Отправь /register, затем дождись одобрения.");
+            return;
+        }
+        NotificationSettingsService.Settings settings = notifications.get(from.getId());
+        send(SendMessage.builder()
+                .chatId(chatId)
+                .text(settingsText(settings))
+                .parseMode("HTML")
+                .replyMarkup(settingsKeyboard(settings))
+                .build());
+    }
+
+    private void handleSettings(CallbackQuery cb, String data) {
+        long userId = cb.getFrom().getId();
+        if (!registration.isApproved(userId)) {
+            answerCallback(cb.getId(), "Нужен доступ.");
+            return;
+        }
+        if (data.equals(CB_SET_CLOSE)) {
+            answerCallback(cb.getId());
+            deleteMessage(cb.getMessage().getChatId(), cb.getMessage().getMessageId());
+            return;
+        }
+        NotificationSettingsService.Settings settings;
+        if (data.equals(CB_SET_NOTIFY)) {
+            settings = notifications.toggleEnabled(userId);
+        } else if (data.equals(CB_SET_QUIET)) {
+            settings = notifications.toggleQuiet(userId);
+        } else if (data.startsWith(CB_SET_FROM)) {
+            settings = notifications.shiftQuietFrom(userId, parseDelta(data.substring(CB_SET_FROM.length())));
+        } else if (data.startsWith(CB_SET_TO)) {
+            settings = notifications.shiftQuietTo(userId, parseDelta(data.substring(CB_SET_TO.length())));
+        } else {
+            answerCallback(cb.getId(), "Неизвестное действие.");
+            return;
+        }
+        answerCallback(cb.getId());
+        try {
+            client.execute(EditMessageText.builder()
+                    .chatId(String.valueOf(cb.getMessage().getChatId()))
+                    .messageId(cb.getMessage().getMessageId())
+                    .text(settingsText(settings))
+                    .parseMode("HTML")
+                    .replyMarkup(settingsKeyboard(settings))
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to edit settings message", e);
+        }
+    }
+
+    private static int parseDelta(String raw) {
+        return "-".equals(raw) ? -1 : 1;
+    }
+
+    private String settingsText(NotificationSettingsService.Settings s) {
+        StringBuilder sb = new StringBuilder("⚙️ <b>Настройки</b>\n\n");
+        sb.append("🔔 Оповещения по избранным: ").append(s.enabled() ? "вкл" : "выкл").append('\n');
+        sb.append("🌙 Тихие часы: ")
+                .append(s.quietEnabled() ? hour(s.quietFrom()) + "–" + hour(s.quietTo()) + " МСК" : "выкл");
+        sb.append("\n\nПишу, когда на избранной АЗС меняется наличие или набор топлива.");
+        if (s.quietEnabled()) {
+            sb.append(" В тихие часы — без звука.");
+        }
+        return sb.toString();
+    }
+
+    private InlineKeyboardMarkup settingsKeyboard(NotificationSettingsService.Settings s) {
+        var builder = InlineKeyboardMarkup.builder()
+                .keyboardRow(rowOf(btn("🔔 Оповещения: " + (s.enabled() ? "вкл" : "выкл"), CB_SET_NOTIFY)))
+                .keyboardRow(rowOf(btn("🌙 Тихие часы: " + (s.quietEnabled() ? "вкл" : "выкл"), CB_SET_QUIET)));
+        if (s.quietEnabled()) {
+            builder.keyboardRow(stepRow("с " + hour(s.quietFrom()), CB_SET_FROM));
+            builder.keyboardRow(stepRow("до " + hour(s.quietTo()), CB_SET_TO));
+        }
+        return builder.keyboardRow(rowOf(btn("✖ Закрыть", CB_SET_CLOSE))).build();
+    }
+
+    private InlineKeyboardRow stepRow(String label, String prefix) {
+        InlineKeyboardRow row = new InlineKeyboardRow();
+        row.add(btn("◀", prefix + "-"));
+        row.add(btn(label, CB_GRID_NOOP));
+        row.add(btn("▶", prefix + "+"));
+        return row;
+    }
+
+    private static String hour(int h) {
+        return String.format(Locale.ROOT, "%02d:00", h);
     }
 
     // ---- grid building ----
@@ -777,6 +889,10 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             handleFilterClear(cb);
         } else if (data.equals(CB_FILTER_CLOSE)) {
             handleFilterClose(cb);
+        } else if (data.startsWith("set:")) {
+            handleSettings(cb, data);
+        } else if (data.startsWith(FavoriteWatcher.CB_COMMENTS)) {
+            handleWatchComments(cb, data);
         } else {
             answerCallback(cb.getId(), "Неизвестное действие.");
         }
@@ -854,6 +970,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         setMenu(chatId, List.of(
                 BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
                 BotCommand.builder().command("filters").description("Фильтр по топливу").build(),
+                BotCommand.builder().command("settings").description("Настройки оповещений").build(),
                 BotCommand.builder().command("help").description("Помощь").build()));
     }
 
@@ -861,6 +978,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         setMenu(chatId, List.of(
                 BotCommand.builder().command("nearby").description("Показать ближайшие АЗС").build(),
                 BotCommand.builder().command("filters").description("Фильтр по топливу").build(),
+                BotCommand.builder().command("settings").description("Настройки оповещений").build(),
                 BotCommand.builder().command("pending").description("Заявки на доступ").build(),
                 BotCommand.builder().command("help").description("Помощь").build()));
     }

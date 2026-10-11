@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import ru.gdebenz.config.GdeBenzApiProperties;
 import ru.gdebenz.fuel.api.CommentDto;
 import ru.gdebenz.fuel.api.NearbyResponse;
+import ru.gdebenz.fuel.api.StationSummaryDto;
 
 import java.io.IOException;
 import java.net.CookieManager;
@@ -70,6 +71,16 @@ public class GdeBenzApiClient {
             return List.of(mapper.readValue(fetch(url), CommentDto[].class));
         } catch (IOException e) {
             throw new ApiException("failed to parse comments response", e);
+        }
+    }
+
+    /** Summary of one station (status + time of the latest report), used by the favorites poller. */
+    public StationSummaryDto station(String osmId) {
+        String url = String.format(Locale.ROOT, "%s/%s?_=%d", props.commentsUrl(), osmId, clock.millis());
+        try {
+            return mapper.readValue(fetch(url), StationSummaryDto.class);
+        } catch (IOException e) {
+            throw new ApiException("failed to parse station response", e);
         }
     }
 

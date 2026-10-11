@@ -12,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
  */
 @SpringBootTest(properties = {
         "telegrambots.enabled=false",
+        "gdebenz.watch.enabled=false",
         "telegram.bot.token=123456:TEST-CONTEXT-LOAD",
         "spring.datasource.url=jdbc:h2:mem:gdebenz;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
         "spring.datasource.username=sa",
