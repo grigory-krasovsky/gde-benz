@@ -10,7 +10,7 @@ class NotificationSettingsTest {
 
     @Test
     void quietHoursWrapPastMidnight() {
-        Settings s = new Settings(true, true, 23, 7);
+        Settings s = new Settings(true, false, true, 23, 7);
         assertThat(s.isQuiet(23)).isTrue();
         assertThat(s.isQuiet(3)).isTrue();
         assertThat(s.isQuiet(7)).isFalse();
@@ -19,7 +19,7 @@ class NotificationSettingsTest {
 
     @Test
     void quietHoursWithinOneDay() {
-        Settings s = new Settings(true, true, 13, 15);
+        Settings s = new Settings(true, false, true, 13, 15);
         assertThat(s.isQuiet(13)).isTrue();
         assertThat(s.isQuiet(14)).isTrue();
         assertThat(s.isQuiet(15)).isFalse();
@@ -27,7 +27,7 @@ class NotificationSettingsTest {
 
     @Test
     void disabledQuietHoursAreNeverQuiet() {
-        assertThat(new Settings(true, false, 23, 7).isQuiet(2)).isFalse();
+        assertThat(new Settings(true, false, false, 23, 7).isQuiet(2)).isFalse();
     }
 
     @Test

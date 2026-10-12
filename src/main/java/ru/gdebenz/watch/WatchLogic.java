@@ -83,18 +83,67 @@ final class WatchLogic {
         return dot >= 0 ? detail.substring(0, dot) : detail;
     }
 
-    /** HTML alert: station, new state, previous state, and the latest report's time (MSK) and details. */
-    static String alertText(String brand, String addr, Essence was, Essence now, CommentView latest) {
+    /**
+     * Human-readable change lines ("🔴 Закончился 95", "🟢 Появились 92, ДТ", queue on/off), narrowed to
+     * {@code filter} grades when it is non-empty ("95" also covers "95+"). Empty = nothing relevant
+     * changed for this user, so no alert.
+     */
+    static List<String> changeLines(Essence was, Essence now, Set<String> filter) {
+        if (now.status() == FuelStatus.UNKNOWN) {
+            return List.of();
+        }
+        List<String> wasFuels = grades(was.fuels());
+        List<String> nowFuels = grades(now.fuels());
+        List<String> gone = relevant(minus(wasFuels, nowFuels), filter);
+        List<String> appeared = relevant(minus(nowFuels, wasFuels), filter);
+        boolean wasOpen = isOpen(was.status());
+        boolean nowOpen = isOpen(now.status());
+        List<String> lines = new ArrayList<>();
+
+        if (wasOpen && !nowOpen) {
+            // Closed: relevant if a watched grade disappeared, or we never knew which grades it had.
+            if (!gone.isEmpty() || wasFuels.isEmpty()) {
+                lines.add("🔴 Топливо закончилось");
+                if (!gone.isEmpty()) {
+                    lines.add(gradesChange("Закончился", "Закончились", gone));
+                }
+            }
+            return lines;
+        }
+        if (!wasOpen && nowOpen && nowFuels.isEmpty()) {
+            lines.add("🟢 Топливо появилось (марки не указаны)");
+            return lines;
+        }
+        if (!gone.isEmpty()) {
+            lines.add("🔴 " + gradesChange("Закончился", "Закончились", gone));
+        }
+        if (!appeared.isEmpty()) {
+            lines.add("🟢 " + gradesChange("Появился", "Появились", appeared));
+        }
+        if (wasOpen && nowOpen && was.status() != now.status()
+                && (nowFuels.isEmpty() || !relevant(nowFuels, filter).isEmpty())) {
+            lines.add(now.status() == FuelStatus.QUEUE ? "🟡 Появилась очередь" : "🟢 Очередь пропала");
+        }
+        return lines;
+    }
+
+    /** HTML alert: station, change lines, the full current grade set, and the latest report's time (MSK). */
+    static String alertText(String brand, String addr, List<String> changes, Essence now, CommentView latest) {
         StringBuilder sb = new StringBuilder("🔔 <b>").append(esc(brand == null || brand.isBlank() ? "АЗС" : brand))
                 .append("</b>");
         if (addr != null && !addr.isBlank()) {
             sb.append(" · ").append(esc(addr));
         }
-        sb.append('\n').append(describe(now));
-        if (now.status() == FuelStatus.UNAVAILABLE && latest != null && !latest.detail().isBlank()) {
-            sb.append(" · ").append(esc(latest.detail()));
+        for (String line : changes) {
+            sb.append('\n').append(esc(line));
         }
-        sb.append("\nбыло: ").append(describe(was));
+        if (now.status() == FuelStatus.UNAVAILABLE) {
+            if (latest != null && !latest.detail().isBlank()) {
+                sb.append('\n').append(esc(latest.detail()));
+            }
+        } else if (!now.fuels().isEmpty()) {
+            sb.append("\nСейчас есть: ").append(now.fuels().replace(",", ", "));
+        }
         if (latest != null && latest.createdAt() != null) {
             sb.append("\nотметка в ").append(timeMsk(latest.createdAt())).append(" МСК");
             if (latest.onSite()) {
@@ -104,14 +153,30 @@ final class WatchLogic {
         return sb.toString();
     }
 
-    static String describe(Essence e) {
-        String fuels = e.fuels().isEmpty() ? "" : ": " + e.fuels().replace(",", ", ");
-        return e.status().emoji() + " " + switch (e.status()) {
-            case AVAILABLE -> "есть" + fuels;
-            case QUEUE -> "очередь" + fuels;
-            case UNAVAILABLE -> "нет";
-            case UNKNOWN -> "статус неизвестен";
-        };
+    private static boolean isOpen(FuelStatus status) {
+        return status == FuelStatus.AVAILABLE || status == FuelStatus.QUEUE;
+    }
+
+    private static List<String> grades(String csv) {
+        return csv == null || csv.isEmpty() ? List.of() : List.of(csv.split(","));
+    }
+
+    private static List<String> minus(List<String> a, List<String> b) {
+        return a.stream().filter(g -> !b.contains(g)).toList();
+    }
+
+    /** Grades the user watches: all when the filter is empty, else those selected ("95" covers "95+"). */
+    private static List<String> relevant(List<String> grades, Set<String> filter) {
+        if (filter == null || filter.isEmpty()) {
+            return grades;
+        }
+        return grades.stream()
+                .filter(g -> filter.contains(g) || ("95+".equals(g) && filter.contains("95")))
+                .toList();
+    }
+
+    private static String gradesChange(String one, String many, List<String> grades) {
+        return (grades.size() == 1 ? one : many) + " " + String.join(", ", grades);
     }
 
     static String timeMsk(Instant at) {

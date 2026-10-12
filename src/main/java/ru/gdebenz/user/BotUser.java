@@ -53,6 +53,9 @@ public class BotUser {
     @Column(name = "notify_enabled", nullable = false)
     private boolean notifyEnabled = true;
 
+    @Column(name = "notify_use_filter", nullable = false)
+    private boolean notifyUseFilter;
+
     @Column(name = "quiet_enabled", nullable = false)
     private boolean quietEnabled = true;
 
@@ -98,9 +101,10 @@ public class BotUser {
         this.updatedAt = now;
     }
 
-    public void setNotifications(boolean notifyEnabled, boolean quietEnabled, int quietFrom, int quietTo,
-                                 Instant now) {
+    public void setNotifications(boolean notifyEnabled, boolean notifyUseFilter, boolean quietEnabled,
+                                 int quietFrom, int quietTo, Instant now) {
         this.notifyEnabled = notifyEnabled;
+        this.notifyUseFilter = notifyUseFilter;
         this.quietEnabled = quietEnabled;
         this.quietFrom = quietFrom;
         this.quietTo = quietTo;
@@ -149,6 +153,10 @@ public class BotUser {
 
     public boolean isNotifyEnabled() {
         return notifyEnabled;
+    }
+
+    public boolean isNotifyUseFilter() {
+        return notifyUseFilter;
     }
 
     public boolean isQuietEnabled() {

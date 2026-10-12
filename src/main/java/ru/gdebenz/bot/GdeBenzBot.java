@@ -80,6 +80,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private static final String CB_FILTER_CLOSE = "flt:close";
     private static final String CB_SET_NOTIFY = "set:n";
     private static final String CB_SET_QUIET = "set:q";
+    private static final String CB_SET_FILTER = "set:flt";
     private static final String CB_SET_FROM = "set:f:";
     private static final String CB_SET_TO = "set:t:";
     private static final String CB_SET_CLOSE = "set:close";
@@ -645,7 +646,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         NotificationSettingsService.Settings settings = notifications.get(from.getId());
         send(SendMessage.builder()
                 .chatId(chatId)
-                .text(settingsText(settings))
+                .text(settingsText(settings, filters.get(from.getId())))
                 .parseMode("HTML")
                 .replyMarkup(settingsKeyboard(settings))
                 .build());
@@ -665,6 +666,8 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         NotificationSettingsService.Settings settings;
         if (data.equals(CB_SET_NOTIFY)) {
             settings = notifications.toggleEnabled(userId);
+        } else if (data.equals(CB_SET_FILTER)) {
+            settings = notifications.toggleUseFilter(userId);
         } else if (data.equals(CB_SET_QUIET)) {
             settings = notifications.toggleQuiet(userId);
         } else if (data.startsWith(CB_SET_FROM)) {
@@ -680,7 +683,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
             client.execute(EditMessageText.builder()
                     .chatId(String.valueOf(cb.getMessage().getChatId()))
                     .messageId(cb.getMessage().getMessageId())
-                    .text(settingsText(settings))
+                    .text(settingsText(settings, filters.get(userId)))
                     .parseMode("HTML")
                     .replyMarkup(settingsKeyboard(settings))
                     .build());
@@ -693,12 +696,16 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
         return "-".equals(raw) ? -1 : 1;
     }
 
-    private String settingsText(NotificationSettingsService.Settings s) {
+    private String settingsText(NotificationSettingsService.Settings s, Set<String> filter) {
         StringBuilder sb = new StringBuilder("⚙️ <b>Настройки</b>\n\n");
         sb.append("🔔 Оповещения по избранным: ").append(s.enabled() ? "вкл" : "выкл").append('\n');
+        sb.append("🔎 Только по фильтру: ").append(s.useFilter() ? "вкл" : "выкл")
+                .append(filter.isEmpty() ? " (фильтр не задан — /filters)" : " (" + String.join(", ", filter) + ")")
+                .append('\n');
         sb.append("🌙 Тихие часы: ")
                 .append(s.quietEnabled() ? hour(s.quietFrom()) + "–" + hour(s.quietTo()) + " МСК" : "выкл");
-        sb.append("\n\nПишу, когда на избранной АЗС меняется наличие или набор топлива.");
+        sb.append("\n\nПишу, когда на избранной АЗС заканчивается или появляется топливо")
+                .append(s.useFilter() && !filter.isEmpty() ? " из фильтра." : ".");
         if (s.quietEnabled()) {
             sb.append(" В тихие часы — без звука.");
         }
@@ -708,6 +715,7 @@ public class GdeBenzBot extends DefaultLongPollingUpdateConsumer implements Spri
     private InlineKeyboardMarkup settingsKeyboard(NotificationSettingsService.Settings s) {
         var builder = InlineKeyboardMarkup.builder()
                 .keyboardRow(rowOf(btn("🔔 Оповещения: " + (s.enabled() ? "вкл" : "выкл"), CB_SET_NOTIFY)))
+                .keyboardRow(rowOf(btn("🔎 Только по фильтру: " + (s.useFilter() ? "вкл" : "выкл"), CB_SET_FILTER)))
                 .keyboardRow(rowOf(btn("🌙 Тихие часы: " + (s.quietEnabled() ? "вкл" : "выкл"), CB_SET_QUIET)));
         if (s.quietEnabled()) {
             builder.keyboardRow(stepRow("с " + hour(s.quietFrom()), CB_SET_FROM));

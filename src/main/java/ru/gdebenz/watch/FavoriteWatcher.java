@@ -21,6 +21,7 @@ import ru.gdebenz.user.BotUser;
 import ru.gdebenz.user.BotUserRepository;
 import ru.gdebenz.user.FavoriteStation;
 import ru.gdebenz.user.FavoriteStationRepository;
+import ru.gdebenz.user.FuelFilterService;
 import ru.gdebenz.user.NotificationSettingsService.Settings;
 import ru.gdebenz.user.RegistrationStatus;
 
@@ -29,13 +30,15 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
  * Polls every favorite station (once per station, however many users starred it) and alerts its
  * subscribers when the station's essence — status or grade set — changes. Only stations of approved
- * users with alerts enabled are polled; during a user's quiet hours the alert is sent silently.
+ * users with alerts enabled are polled. With "only by filter" on, a user is alerted only about grades
+ * from their /filters selection; during their quiet hours the alert is sent silently.
  * The last seen state lives in {@code station_watch}, so restarts don't re-send alerts, and the
  * first observation of a station only records a baseline.
  */
@@ -139,13 +142,18 @@ public class FavoriteWatcher {
         BotUser user = sub.user();
         FavoriteStation fav = sub.favorite();
         Settings settings = Settings.of(user);
+        Set<String> filter = settings.useFilter() ? FuelFilterService.parse(user.getFuelFilter()) : Set.of();
+        List<String> changes = WatchLogic.changeLines(was, now, filter);
+        if (changes.isEmpty()) {
+            return; // nothing this user watches has changed
+        }
         InlineKeyboardRow row = new InlineKeyboardRow();
         row.add(InlineKeyboardButton.builder().text("🗺 Маршрут").url(WatchLogic.routeUrl(fav.getLat(), fav.getLon())).build());
         row.add(InlineKeyboardButton.builder().text("💬 Отметки").callbackData(CB_COMMENTS + osmId).build());
         try {
             telegram.execute(SendMessage.builder()
                     .chatId(user.getChatId())
-                    .text(WatchLogic.alertText(fav.getBrand(), fav.getAddr(), was, now, latest))
+                    .text(WatchLogic.alertText(fav.getBrand(), fav.getAddr(), changes, now, latest))
                     .parseMode("HTML")
                     .disableNotification(settings.isQuiet(WatchLogic.hourMsk(at)))
                     .replyMarkup(InlineKeyboardMarkup.builder().keyboardRow(row).build())

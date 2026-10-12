@@ -63,7 +63,7 @@ public class FuelFilterService {
     }
 
     /** Parses a stored CSV into the known grades, in canonical order (ignoring unknown/blank tokens). */
-    static Set<String> parse(String csv) {
+    public static Set<String> parse(String csv) {
         Set<String> raw = new LinkedHashSet<>();
         if (csv != null && !csv.isBlank()) {
             for (String token : csv.split(",")) {
