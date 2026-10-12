@@ -290,6 +290,19 @@ class FuelMappingTest {
     }
 
     @Test
+    void parsesStationChat() throws Exception {
+        String json = """
+                {"comments":[{"id":677739,"author_id":184324,"author_name":"Николай Б.","body":"100 есть?",
+                  "created_at":"2026-10-11T18:19:10.184919Z","reactions":{}}]}
+                """;
+        var chat = mapper().readValue(json, ru.gdebenz.fuel.api.ChatResponse.class).comments();
+        assertThat(chat).hasSize(1);
+        assertThat(chat.getFirst().id()).isEqualTo(677739L);
+        assertThat(chat.getFirst().authorName()).isEqualTo("Николай Б.");
+        assertThat(chat.getFirst().createdAt()).isEqualTo("2026-10-11T18:19:10.184919Z");
+    }
+
+    @Test
     void parsesCamelCaseStationSummary() throws Exception {
         String json = """
                 {"status":"yes","confirmations":2,"updated":"2026-10-11 11:03:55","views":122626,

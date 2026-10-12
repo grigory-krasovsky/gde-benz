@@ -3,6 +3,7 @@ package ru.gdebenz.watch;
 import org.junit.jupiter.api.Test;
 import ru.gdebenz.fuel.CommentView;
 import ru.gdebenz.fuel.FuelStatus;
+import ru.gdebenz.fuel.api.ChatMessageDto;
 
 import java.time.Instant;
 import java.util.List;
@@ -109,6 +110,29 @@ class WatchLogicTest {
         assertThat(WatchLogic.changeLines(queue, open("92,95"), Set.of("95"))).containsExactly("🟢 Очередь пропала");
         assertThat(WatchLogic.changeLines(open("92"), new WatchLogic.Essence(FuelStatus.QUEUE, "92"), Set.of("95")))
                 .isEmpty();
+    }
+
+    private static final List<String> KEYWORDS = List.of("бензовоз", "привез", "завоз", "слив");
+
+    @Test
+    void keywordStatementsMatchButQuestionsDoNot() {
+        assertThat(WatchLogic.hasKeywordStatement("Бензовоз приехал, сливают 95", KEYWORDS)).isTrue();
+        assertThat(WatchLogic.hasKeywordStatement("Бензовоз сегодня был?", KEYWORDS)).isFalse();
+        assertThat(WatchLogic.hasKeywordStatement("Привезли 92! А 100 будет?", KEYWORDS)).isTrue();
+        assertThat(WatchLogic.hasKeywordStatement("Когда завоз?", KEYWORDS)).isFalse();
+        assertThat(WatchLogic.hasKeywordStatement("100 есть?", KEYWORDS)).isFalse();
+        assertThat(WatchLogic.hasKeywordStatement("Всем привет\nпривёз бензовоз 95", KEYWORDS)).isTrue(); // ё folded
+        assertThat(WatchLogic.hasKeywordStatement("бензовоз когда будет", KEYWORDS)).isTrue(); // accepted defect
+        assertThat(WatchLogic.hasKeywordStatement("", KEYWORDS)).isFalse();
+    }
+
+    @Test
+    void chatAlertQuotesMessageWithAuthorAndMoscowTime() {
+        String text = WatchLogic.chatAlertText("Роснефть", "Загородное шоссе, 2Б",
+                new ChatMessageDto(1L, "Николай Б.", "Бензовоз <сливает> 95", "2026-10-11T18:19:10.184919Z"));
+        assertThat(text).startsWith("🚚 <b>Роснефть</b> · Загородное шоссе, 2Б");
+        assertThat(text).contains("«Бензовоз &lt;сливает&gt; 95»");
+        assertThat(text).contains("— Николай Б., 21:19 МСК");
     }
 
     @Test

@@ -12,6 +12,7 @@ import java.time.Duration;
 public record GdeBenzApiProperties(
         String baseUrl,
         String commentsUrl,
+        String chatsUrl,
         String userAgent,
         String referer,
         Duration connectTimeout,
@@ -29,6 +30,9 @@ public record GdeBenzApiProperties(
         }
         if (commentsUrl == null || commentsUrl.isBlank()) {
             commentsUrl = "https://gdebenz.ru/api/comments";
+        }
+        if (chatsUrl == null || chatsUrl.isBlank()) {
+            chatsUrl = "https://api.gdebenz.ru/api/chats";
         }
         if (userAgent == null || userAgent.isBlank()) {
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

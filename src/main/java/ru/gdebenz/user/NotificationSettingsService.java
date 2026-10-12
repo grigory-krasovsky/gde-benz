@@ -7,20 +7,22 @@ import java.time.Clock;
 import java.util.function.UnaryOperator;
 
 /**
- * Per-user settings for favorite-station alerts: on/off, "only grades from my filter", and quiet
- * hours (whole hours in MSK). Stored on {@code bot_users}; during quiet hours alerts are still sent,
- * but silently.
+ * Per-user settings for favorite-station alerts: on/off, "only grades from my filter", keyword alerts
+ * from station chats, and quiet hours (whole hours in MSK). Stored on {@code bot_users}; during quiet
+ * hours alerts are still sent, but silently.
  */
 @Service
 public class NotificationSettingsService {
 
     /**
      * Snapshot of a user's alert settings; quiet hours are [from, to) in MSK and may wrap past midnight.
-     * {@code useFilter} narrows alerts to the grades selected in /filters.
+     * {@code useFilter} narrows status alerts to the grades selected in /filters; {@code chat} enables
+     * keyword alerts from station chats. {@code enabled} is the master switch for both.
      */
-    public record Settings(boolean enabled, boolean useFilter, boolean quietEnabled, int quietFrom, int quietTo) {
+    public record Settings(boolean enabled, boolean useFilter, boolean chat,
+                           boolean quietEnabled, int quietFrom, int quietTo) {
 
-        public static final Settings DEFAULT = new Settings(true, false, true, 23, 7);
+        public static final Settings DEFAULT = new Settings(true, false, true, true, 23, 7);
 
         /** Whether {@code hour} (0..23, MSK) falls into the quiet interval. from == to means never. */
         public boolean isQuiet(int hour) {
@@ -33,8 +35,24 @@ public class NotificationSettingsService {
         }
 
         public static Settings of(BotUser u) {
-            return new Settings(u.isNotifyEnabled(), u.isNotifyUseFilter(), u.isQuietEnabled(),
+            return new Settings(u.isNotifyEnabled(), u.isNotifyUseFilter(), u.isNotifyChat(), u.isQuietEnabled(),
                     u.getQuietFrom(), u.getQuietTo());
+        }
+
+        Settings withEnabled(boolean v) {
+            return new Settings(v, useFilter, chat, quietEnabled, quietFrom, quietTo);
+        }
+
+        Settings withUseFilter(boolean v) {
+            return new Settings(enabled, v, chat, quietEnabled, quietFrom, quietTo);
+        }
+
+        Settings withChat(boolean v) {
+            return new Settings(enabled, useFilter, v, quietEnabled, quietFrom, quietTo);
+        }
+
+        Settings withQuiet(boolean on, int from, int to) {
+            return new Settings(enabled, useFilter, chat, on, from, to);
         }
     }
 
@@ -53,31 +71,34 @@ public class NotificationSettingsService {
 
     @Transactional
     public Settings toggleEnabled(long userId) {
-        return update(userId, s -> new Settings(!s.enabled(), s.useFilter(), s.quietEnabled(), s.quietFrom(), s.quietTo()));
+        return update(userId, s -> s.withEnabled(!s.enabled()));
     }
 
     @Transactional
     public Settings toggleUseFilter(long userId) {
-        return update(userId, s -> new Settings(s.enabled(), !s.useFilter(), s.quietEnabled(), s.quietFrom(), s.quietTo()));
+        return update(userId, s -> s.withUseFilter(!s.useFilter()));
+    }
+
+    @Transactional
+    public Settings toggleChat(long userId) {
+        return update(userId, s -> s.withChat(!s.chat()));
     }
 
     @Transactional
     public Settings toggleQuiet(long userId) {
-        return update(userId, s -> new Settings(s.enabled(), s.useFilter(), !s.quietEnabled(), s.quietFrom(), s.quietTo()));
+        return update(userId, s -> s.withQuiet(!s.quietEnabled(), s.quietFrom(), s.quietTo()));
     }
 
     /** Moves the quiet-hours start by {@code delta} hours, skipping the value equal to the end. */
     @Transactional
     public Settings shiftQuietFrom(long userId, int delta) {
-        return update(userId, s -> new Settings(s.enabled(), s.useFilter(), s.quietEnabled(),
-                shift(s.quietFrom(), delta, s.quietTo()), s.quietTo()));
+        return update(userId, s -> s.withQuiet(s.quietEnabled(), shift(s.quietFrom(), delta, s.quietTo()), s.quietTo()));
     }
 
     /** Moves the quiet-hours end by {@code delta} hours, skipping the value equal to the start. */
     @Transactional
     public Settings shiftQuietTo(long userId, int delta) {
-        return update(userId, s -> new Settings(s.enabled(), s.useFilter(), s.quietEnabled(),
-                s.quietFrom(), shift(s.quietTo(), delta, s.quietFrom())));
+        return update(userId, s -> s.withQuiet(s.quietEnabled(), s.quietFrom(), shift(s.quietTo(), delta, s.quietFrom())));
     }
 
     private Settings update(long userId, UnaryOperator<Settings> change) {
@@ -86,8 +107,8 @@ public class NotificationSettingsService {
             return Settings.DEFAULT;
         }
         Settings next = change.apply(Settings.of(user));
-        user.setNotifications(next.enabled(), next.useFilter(), next.quietEnabled(), next.quietFrom(), next.quietTo(),
-                clock.instant());
+        user.setNotifications(next.enabled(), next.useFilter(), next.chat(), next.quietEnabled(),
+                next.quietFrom(), next.quietTo(), clock.instant());
         repo.save(user);
         return next;
     }

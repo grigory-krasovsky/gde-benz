@@ -2,6 +2,7 @@ package ru.gdebenz.watch;
 
 import ru.gdebenz.fuel.CommentView;
 import ru.gdebenz.fuel.FuelStatus;
+import ru.gdebenz.fuel.api.ChatMessageDto;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -11,6 +12,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Pure helpers for the favorites poller: what a station's "essence" is (status + grade set),
@@ -24,6 +27,9 @@ final class WatchLogic {
     /** Recognized grades, in display order; anything else in a report is ignored. */
     private static final List<String> GRADES = List.of("80", "92", "95", "95+", "98", "100", "ДТ");
     private static final DateTimeFormatter HH_MM = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT);
+    /** A sentence (group 1) and its terminators (group 2); the last one may have none. */
+    private static final Pattern SENTENCE = Pattern.compile("([^.!?\\n]+)([.!?\\n]*)");
+    private static final int CHAT_TEXT_MAX = 500;
 
     private WatchLogic() {
     }
@@ -151,6 +157,68 @@ final class WatchLogic {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * Whether some sentence of a chat message contains a keyword stem and is not a question
+     * ("Бензовоз приехал" yes, "Бензовоз был?" no). Sentences end at . ! ? or a line break; a
+     * question without "?" slips through — a known, accepted false positive.
+     */
+    static boolean hasKeywordStatement(String body, List<String> keywords) {
+        if (body == null || body.isBlank()) {
+            return false;
+        }
+        Matcher m = SENTENCE.matcher(fold(body));
+        while (m.find()) {
+            if (m.group(2).contains("?")) {
+                continue;
+            }
+            String sentence = m.group(1);
+            for (String keyword : keywords) {
+                if (sentence.contains(fold(keyword))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** HTML alert for a keyword chat message: station, quoted text, author and time (MSK). */
+    static String chatAlertText(String brand, String addr, ChatMessageDto message) {
+        StringBuilder sb = new StringBuilder("🚚 <b>").append(esc(brand == null || brand.isBlank() ? "АЗС" : brand))
+                .append("</b>");
+        if (addr != null && !addr.isBlank()) {
+            sb.append(" · ").append(esc(addr));
+        }
+        String body = message.body().strip();
+        if (body.length() > CHAT_TEXT_MAX) {
+            body = body.substring(0, CHAT_TEXT_MAX - 1) + "…";
+        }
+        sb.append("\n«").append(esc(body)).append('»');
+        StringBuilder by = new StringBuilder();
+        if (message.authorName() != null && !message.authorName().isBlank()) {
+            by.append(esc(message.authorName()));
+        }
+        Instant at = parseInstant(message.createdAt());
+        if (at != null) {
+            by.append(by.isEmpty() ? "" : ", ").append(timeMsk(at)).append(" МСК");
+        }
+        if (!by.isEmpty()) {
+            sb.append("\n— ").append(by);
+        }
+        return sb.toString();
+    }
+
+    private static String fold(String text) {
+        return text.toLowerCase(Locale.ROOT).replace('ё', 'е');
+    }
+
+    private static Instant parseInstant(String raw) {
+        try {
+            return raw == null ? null : Instant.parse(raw.trim());
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static boolean isOpen(FuelStatus status) {

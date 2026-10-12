@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import ru.gdebenz.config.GdeBenzApiProperties;
+import ru.gdebenz.fuel.api.ChatMessageDto;
+import ru.gdebenz.fuel.api.ChatResponse;
 import ru.gdebenz.fuel.api.CommentDto;
 import ru.gdebenz.fuel.api.NearbyResponse;
 import ru.gdebenz.fuel.api.StationSummaryDto;
@@ -81,6 +83,17 @@ public class GdeBenzApiClient {
             return mapper.readValue(fetch(url), StationSummaryDto.class);
         } catch (IOException e) {
             throw new ApiException("failed to parse station response", e);
+        }
+    }
+
+    /** Latest free-text messages of a station chat (newest first), used for keyword alerts. */
+    public List<ChatMessageDto> chat(String osmId, int limit) {
+        String url = String.format(Locale.ROOT, "%s/%s?limit=%d", props.chatsUrl(), osmId, limit);
+        try {
+            ChatResponse response = mapper.readValue(fetch(url), ChatResponse.class);
+            return response.comments() == null ? List.of() : response.comments();
+        } catch (IOException e) {
+            throw new ApiException("failed to parse chat response", e);
         }
     }
 

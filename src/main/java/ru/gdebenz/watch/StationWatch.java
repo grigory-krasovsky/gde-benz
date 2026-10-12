@@ -30,6 +30,10 @@ public class StationWatch {
     @Column(name = "checked_at", nullable = false)
     private Instant checkedAt;
 
+    /** Id of the newest processed station-chat message; null = chat not seen yet. */
+    @Column(name = "last_chat_id")
+    private Long lastChatId;
+
     protected StationWatch() {
         // for JPA
     }
@@ -51,6 +55,14 @@ public class StationWatch {
 
     public void touch(Instant now) {
         this.checkedAt = now;
+    }
+
+    public void setLastChatId(Long lastChatId) {
+        this.lastChatId = lastChatId;
+    }
+
+    public Long getLastChatId() {
+        return lastChatId;
     }
 
     public String getOsmId() {

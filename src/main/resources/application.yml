@@ -43,6 +43,9 @@ gdebenz:
     enabled: ${GDEBENZ_WATCH_ENABLED:true}
     interval: ${GDEBENZ_WATCH_INTERVAL:60s}
     request-pause: ${GDEBENZ_WATCH_REQUEST_PAUSE:500ms}
+    # Station chats (api.gdebenz.ru/api/chats/{osm_id}) are polled less often, looking for keyword stems.
+    chat-interval: ${GDEBENZ_WATCH_CHAT_INTERVAL:10m}
+    keywords: бензовоз,топливозаправщик,привез,завез,подвез,завоз,слив,разгруж
 
 logging:
   level:
